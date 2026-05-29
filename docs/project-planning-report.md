@@ -84,7 +84,7 @@
 - Browser: `http://localhost:7474`
 - Bolt: `bolt://localhost:7687`
 - User: `neo4j`
-- Password: `lightrag_pass`
+- Password: use your local `.env` value
 
 ### 4.2 LangGraph 定位
 
