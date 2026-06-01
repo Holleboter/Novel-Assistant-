@@ -33,6 +33,11 @@ def test_deterministic_story_planner_builds_mvp_structures():
     assert chapter_plan.chapter_number == 1
     assert chapter_plan.pov_character == "沈砚"
 
+    outline = planner.plan_chapters(requirement, blueprint, characters, chapter_count=4)
+
+    assert [chapter.chapter_number for chapter in outline] == [1, 2, 3, 4]
+    assert outline[0].pov_character == "沈砚"
+
 
 def test_llm_story_planner_parses_structured_json_outputs():
     client = FakeLLMClient(
@@ -147,3 +152,40 @@ def test_llm_story_planner_normalizes_string_lists():
     assert requirement.constraints == ["第一章形成追查动机"]
     assert characters[0].traits == ["谨慎"]
     assert chapter_plan.key_events == ["茶馆忽然停电"]
+
+
+def test_llm_story_planner_generates_multi_chapter_outline():
+    client = FakeLLMClient(
+        [
+            """
+            [
+              {
+                "chapter_number": 1,
+                "title": "雨夜来信",
+                "goal": "沈砚收到未来来信。",
+                "key_events": "茶馆忽然停电",
+                "pov_character": "沈砚"
+              },
+              {
+                "chapter_number": 2,
+                "title": "旧案回声",
+                "goal": "沈砚开始追查旧案。",
+                "key_events": ["旧案卷宗出现"],
+                "pov_character": "沈砚"
+              }
+            ]
+            """
+        ]
+    )
+    planner = LLMBackedStoryPlanner(llm_client=client)
+    deterministic = DeterministicStoryPlanner()
+    requirement = deterministic.analyze_requirement("写一个雨夜悬疑故事")
+    blueprint = deterministic.build_blueprint(requirement)
+    characters = deterministic.build_characters(requirement, blueprint)
+
+    outline = planner.plan_chapters(requirement, blueprint, characters, chapter_count=2)
+
+    assert len(outline) == 2
+    assert outline[0].key_events == ["茶馆忽然停电"]
+    assert outline[1].title == "旧案回声"
+    assert "多章节大纲" in client.calls[0]["user_prompt"]

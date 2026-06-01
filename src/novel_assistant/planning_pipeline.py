@@ -57,14 +57,44 @@ class DeterministicStoryPlanner:
         characters: list[CharacterProfile],
         chapter_number: int = 1,
     ) -> ChapterPlan:
+        return self.plan_chapters(
+            requirement,
+            blueprint,
+            characters,
+            chapter_count=chapter_number,
+        )[chapter_number - 1]
+
+    def plan_chapters(
+        self,
+        requirement: UserRequirement,
+        blueprint: StoryBlueprint,
+        characters: list[CharacterProfile],
+        chapter_count: int = 12,
+    ) -> list[ChapterPlan]:
         protagonist = characters[0].name if characters else "主角"
-        return ChapterPlan(
-            chapter_number=chapter_number,
-            title="雨夜来信",
-            goal=f"让{protagonist}收到来自未来的信，并决定追查旧案。",
-            key_events=["茶馆忽然停电", f"一封写着{protagonist}名字的信出现在柜台"],
-            pov_character=protagonist,
-        )
+        chapters = [
+            ChapterPlan(
+                chapter_number=1,
+                title="雨夜来信",
+                goal=f"让{protagonist}收到来自未来的信，并决定追查旧案。",
+                key_events=["茶馆忽然停电", f"一封写着{protagonist}名字的信出现在柜台"],
+                pov_character=protagonist,
+            )
+        ]
+        for number in range(2, chapter_count + 1):
+            chapters.append(
+                ChapterPlan(
+                    chapter_number=number,
+                    title=f"旧案线索 {number}",
+                    goal=f"推进《{blueprint.title}》主线的第 {number} 个关键转折。",
+                    key_events=[
+                        f"{protagonist}追查第 {number} 条线索",
+                        "人物关系出现新的冲突",
+                    ],
+                    pov_character=protagonist,
+                )
+            )
+        return chapters[:chapter_count]
 
 
 class LLMBackedStoryPlanner:
@@ -139,10 +169,24 @@ class LLMBackedStoryPlanner:
         characters: list[CharacterProfile],
         chapter_number: int = 1,
     ) -> ChapterPlan:
+        return self.plan_chapters(
+            requirement,
+            blueprint,
+            characters,
+            chapter_count=chapter_number,
+        )[chapter_number - 1]
+
+    def plan_chapters(
+        self,
+        requirement: UserRequirement,
+        blueprint: StoryBlueprint,
+        characters: list[CharacterProfile],
+        chapter_count: int = 12,
+    ) -> list[ChapterPlan]:
         data = self._complete_json(
-            "请生成第一章计划 ChapterPlan JSON。",
+            "请生成多章节大纲 ChapterPlan JSON 数组。",
             {
-                "chapter_number": chapter_number,
+                "chapter_count": chapter_count,
                 "requirement": requirement.model_dump(mode="json"),
                 "blueprint": blueprint.model_dump(mode="json"),
                 "characters": [character.model_dump(mode="json") for character in characters],
@@ -155,8 +199,13 @@ class LLMBackedStoryPlanner:
                 ],
             },
         )
-        _normalize_list_fields(data, ["key_events"])
-        return ChapterPlan(**data)
+        if isinstance(data, dict) and chapter_count == 1:
+            data = [data]
+        if not isinstance(data, list):
+            raise LLMRequestError("Chapter outline response must be a JSON array")
+        for item in data:
+            _normalize_list_fields(item, ["key_events"])
+        return [ChapterPlan(**item) for item in data]
 
     def _complete_json(self, task: str, payload: dict[str, Any]) -> Any:
         response = self.llm_client.complete(

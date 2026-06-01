@@ -7,6 +7,15 @@ from typing import Any
 from .models import ChapterDraft, RevisedChapterDraft
 
 
+def save_outline(
+    project_id: str, outline: list[Any], root: str | Path = "projects"
+) -> Path:
+    """Persist a project outline as JSON."""
+    outline_path = Path(root) / project_id / "outline.json"
+    _write_json(outline_path, outline)
+    return outline_path
+
+
 def save_workflow_result(result: dict[str, Any], root: str | Path = "projects") -> Path:
     """Persist the MVP workflow result as Markdown plus JSON artifacts."""
     project_id = result["project_id"]

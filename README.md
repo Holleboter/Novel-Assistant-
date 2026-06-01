@@ -70,6 +70,20 @@ print(result["final_chapter"].content)
 
 质检、修订、图谱抽取和章节保存仍走本地确定性逻辑，方便测试和控成本。
 
+后端也支持批量生成章节大纲：
+
+```python
+from novel_assistant.planning_pipeline import LLMBackedStoryPlanner
+from novel_assistant.storage import save_outline
+
+planner = LLMBackedStoryPlanner()
+requirement = planner.analyze_requirement("写一本雨夜悬疑奇幻小说。")
+blueprint = planner.build_blueprint(requirement)
+characters = planner.build_characters(requirement, blueprint)
+outline = planner.plan_chapters(requirement, blueprint, characters, chapter_count=12)
+save_outline("novel-demo", outline)
+```
+
 ## 章节保存结构
 
 生成内容默认保存到：
@@ -78,6 +92,7 @@ print(result["final_chapter"].content)
 projects/<project_id>/
   project.json
   blueprint.json
+  outline.json
   chapters/
     chapter-0001/
       plan.json
