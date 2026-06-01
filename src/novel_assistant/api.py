@@ -15,11 +15,14 @@ from .llm_client import LLMClient
 from .llm_profiles import LLMProfile, LLMProfileStore, PublicLLMProfile
 from .models import ChapterPlan
 from .planning_pipeline import DeterministicStoryPlanner, LLMBackedStoryPlanner
+from .skills import SkillStore
 from .storage import (
+    confirm_chapter_content,
     create_project,
     list_projects,
     list_chapters,
     load_outline,
+    read_chapter_content,
     save_chapter_artifacts,
     save_outline,
     save_workflow_result,
@@ -95,6 +98,17 @@ class LLMProfileRequest(BaseModel):
     timeout_seconds: int | None = Field(default=None, gt=0)
 
 
+class SkillApplyRequest(BaseModel):
+    skill_id: str
+    content: str
+    llm_profile: str | None = None
+
+
+class ConfirmChapterRequest(BaseModel):
+    content: str
+    filename: str = "final.md"
+
+
 def create_app(
     planner: Any | None = None,
     writing_pipeline: Any | None = None,
@@ -103,6 +117,7 @@ def create_app(
     llm_client_factory: Any | None = None,
     graph_repository: Any | None = None,
     workflow_run_store: WorkflowRunStore | None = None,
+    skill_store: SkillStore | None = None,
 ) -> FastAPI:
     app = FastAPI()
     story_planner = planner or DeterministicStoryPlanner()
@@ -110,6 +125,7 @@ def create_app(
     profiles = profile_store or LLMProfileStore()
     make_llm_client = llm_client_factory or _default_llm_client_factory
     workflow_runs = workflow_run_store or WorkflowRunStore()
+    skills = skill_store or SkillStore()
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -140,6 +156,25 @@ def create_app(
         if not deleted:
             raise HTTPException(status_code=404, detail="LLM profile not found")
         return Response(status_code=204)
+
+    @app.get("/skills")
+    def list_skills() -> list[dict[str, Any]]:
+        return [skill.model_dump() for skill in skills.list()]
+
+    @app.post("/skills/apply")
+    def apply_skill(request: SkillApplyRequest) -> dict[str, str]:
+        skill = skills.get(request.skill_id)
+        if skill is None:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        profile = _require_profile(profiles, request.llm_profile)
+        response = make_llm_client(profile).complete(
+            system_prompt=skill.content,
+            user_prompt=request.content,
+        )
+        return {
+            "skill_id": skill.id,
+            "content": response.content,
+        }
 
     @app.post("/outline")
     def outline(request: OutlineRequest) -> dict[str, Any]:
@@ -298,6 +333,32 @@ def create_app(
         if not project_dir.exists():
             raise HTTPException(status_code=404, detail="Project not found")
         return list_chapters(project_id, root=storage_root)
+
+    @app.get("/projects/{project_id}/chapters/{chapter_number}/content")
+    def chapter_content(project_id: str, chapter_number: int) -> dict[str, Any]:
+        _validate_project_id(project_id)
+        try:
+            return read_chapter_content(project_id, chapter_number, root=storage_root)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Chapter content not found") from exc
+
+    @app.post("/projects/{project_id}/chapters/{chapter_number}/confirm")
+    def confirm_chapter(
+        project_id: str,
+        chapter_number: int,
+        request: ConfirmChapterRequest,
+    ) -> dict[str, Any]:
+        _validate_project_id(project_id)
+        try:
+            return confirm_chapter_content(
+                project_id,
+                chapter_number,
+                content=request.content,
+                filename=request.filename,
+                root=storage_root,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/projects/{project_id}/chapters/draft-batch")
     def draft_chapter_batch(

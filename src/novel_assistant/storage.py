@@ -10,6 +10,7 @@ from .models import ChapterDraft, RevisedChapterDraft
 
 
 _CHAPTER_DIR_PATTERN = re.compile(r"^chapter-(\d{4})$")
+_FINAL_FILENAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.md$")
 
 
 def create_project(
@@ -107,6 +108,73 @@ def list_chapters(
             )
 
     return sorted(chapters, key=lambda chapter: chapter["chapter_number"])
+
+
+def read_chapter_content(
+    project_id: str,
+    chapter_number: int,
+    root: str | Path = "projects",
+) -> dict[str, Any]:
+    """Return editable markdown content for a chapter."""
+    chapter_dir = _chapter_dir(project_id, chapter_number, root)
+    metadata = _read_metadata(chapter_dir)
+    final_filename = metadata.get("final_filename", "final.md")
+    candidates = [
+        (final_filename, "final"),
+        ("final.md", "final"),
+        ("draft.md", "draft"),
+    ]
+    for filename, source in candidates:
+        path = chapter_dir / filename
+        if path.exists():
+            return {
+                "project_id": project_id,
+                "chapter_number": chapter_number,
+                "filename": filename,
+                "source": source,
+                "content": path.read_text(encoding="utf-8"),
+            }
+    raise FileNotFoundError(errno.ENOENT, "No chapter content found", str(chapter_dir))
+
+
+def confirm_chapter_content(
+    project_id: str,
+    chapter_number: int,
+    content: str,
+    filename: str = "final.md",
+    root: str | Path = "projects",
+) -> dict[str, Any]:
+    """Persist the human-confirmed final markdown for a chapter."""
+    if _FINAL_FILENAME_PATTERN.fullmatch(filename) is None:
+        raise ValueError("Invalid final filename")
+
+    chapter_dir = _chapter_dir(project_id, chapter_number, root)
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    final_path = chapter_dir / filename
+    final_path.write_text(content, encoding="utf-8")
+
+    metadata = _read_metadata(chapter_dir)
+    files = set(metadata.get("files", []))
+    files.add(filename)
+    metadata.update(
+        {
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "status": "confirmed",
+            "content_source": "human_confirmed",
+            "final_filename": filename,
+            "files": sorted(files),
+        }
+    )
+    _write_json(chapter_dir / "metadata.json", metadata)
+    return {
+        "project_id": project_id,
+        "chapter_number": chapter_number,
+        "filename": filename,
+        "status": "confirmed",
+        "content_source": "human_confirmed",
+        "path": str(final_path),
+    }
 
 
 def save_chapter_artifacts(
@@ -212,6 +280,17 @@ def _write_json(path: Path, value: Any) -> None:
 def _write_text(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(value, encoding="utf-8")
+
+
+def _chapter_dir(project_id: str, chapter_number: int, root: str | Path) -> Path:
+    return Path(root) / project_id / "chapters" / f"chapter-{int(chapter_number):04d}"
+
+
+def _read_metadata(chapter_dir: Path) -> dict[str, Any]:
+    metadata_path = chapter_dir / "metadata.json"
+    if not metadata_path.exists():
+        return {}
+    return json.loads(metadata_path.read_text(encoding="utf-8"))
 
 
 def _to_jsonable(value: Any) -> Any:

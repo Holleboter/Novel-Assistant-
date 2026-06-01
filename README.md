@@ -339,6 +339,71 @@ curl http://127.0.0.1:8000/workflows/novel-demo-a1b2c3d4e5f6
 
 当前执行仍是同步的：`POST /workflows/novel-generation` 会先写入 `running`，成功后更新为 `completed`，异常时更新为 `failed`。下一步可以把执行过程放到后台任务里，现有 `GET /workflows/{workflow_id}` 不需要大改。
 
+### 章节编辑 API
+
+创作工作台可以读取章节正文，让用户在编辑器里人工修改；只有用户点击确认后，后端才保存最终 Markdown 文件。
+
+读取章节可编辑正文：
+
+```bash
+curl http://127.0.0.1:8000/projects/novel-demo/chapters/1/content
+```
+
+读取优先级是：`metadata.json` 中的 `final_filename`、`final.md`、`draft.md`。
+
+确认保存最终正文：
+
+```bash
+curl -X POST http://127.0.0.1:8000/projects/novel-demo/chapters/1/confirm ^
+  -H "Content-Type: application/json" ^
+  -d "{\"filename\":\"rain-letter-final.md\",\"content\":\"用户最终确认后的正文\"}"
+```
+
+`filename` 只允许安全的 `.md` 单文件名，例如 `rain-letter-final.md`，不能包含路径分隔符。保存后会更新 `metadata.json`：
+
+```json
+{
+  "status": "confirmed",
+  "content_source": "human_confirmed",
+  "final_filename": "rain-letter-final.md"
+}
+```
+
+### Skill API
+
+Skill 模块会读取本地 `skills/<skill_id>/SKILL.md`，用于对章节正文执行润色、去 AI 味、风格调整等操作。`GET /skills` 只返回摘要，不返回完整 `SKILL.md` 内容。
+
+```text
+skills/
+  humanizer-zh/
+    SKILL.md
+```
+
+查询 Skill：
+
+```bash
+curl http://127.0.0.1:8000/skills
+```
+
+应用 Skill：
+
+```bash
+curl -X POST http://127.0.0.1:8000/skills/apply ^
+  -H "Content-Type: application/json" ^
+  -d "{\"skill_id\":\"humanizer-zh\",\"content\":\"AI 生成的章节正文\",\"llm_profile\":\"deepseek-default\"}"
+```
+
+返回：
+
+```json
+{
+  "skill_id": "humanizer-zh",
+  "content": "润色后的章节正文"
+}
+```
+
+注意：`SKILL.md` 会作为 system prompt 发送给所选模型服务商，不要在 Skill 文件里写真实密钥、内网地址或不可外发资料。接口响应不会返回真实 `api_key`，也不会回显完整 `SKILL.md`。
+
 当前 API 还支持：
 
 ```text
@@ -346,6 +411,8 @@ GET  /llm/profiles
 POST /llm/profiles
 PUT  /llm/profiles/{profile_id}
 DELETE /llm/profiles/{profile_id}
+GET  /skills
+POST /skills/apply
 POST /workflows/novel-generation
 GET  /workflows/{workflow_id}
 POST /projects
@@ -353,6 +420,8 @@ GET  /projects
 GET  /projects/{project_id}/outline
 GET  /projects/{project_id}
 GET  /projects/{project_id}/chapters
+GET  /projects/{project_id}/chapters/{chapter_number}/content
+POST /projects/{project_id}/chapters/{chapter_number}/confirm
 POST /projects/{project_id}/chapters/{chapter_number}/draft
 POST /projects/{project_id}/chapters/draft-batch
 ```

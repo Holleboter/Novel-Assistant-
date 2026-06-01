@@ -168,3 +168,74 @@ def test_list_chapters_returns_metadata_sorted_by_chapter_number(tmp_path):
 
 def test_list_chapters_returns_empty_list_when_no_chapters_exist(tmp_path):
     assert storage.list_chapters("novel-demo", root=tmp_path) == []
+
+
+def test_read_chapter_content_prefers_confirmed_final_file(tmp_path):
+    chapter_dir = tmp_path / "novel-demo" / "chapters" / "chapter-0001"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "draft.md").write_text("draft content", encoding="utf-8")
+    (chapter_dir / "final.md").write_text("final content", encoding="utf-8")
+
+    content = storage.read_chapter_content("novel-demo", 1, root=tmp_path)
+
+    assert content == {
+        "project_id": "novel-demo",
+        "chapter_number": 1,
+        "filename": "final.md",
+        "source": "final",
+        "content": "final content",
+    }
+
+
+def test_confirm_chapter_content_writes_named_final_file_and_metadata(tmp_path):
+    chapter_dir = tmp_path / "novel-demo" / "chapters" / "chapter-0001"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "draft.md").write_text("draft content", encoding="utf-8")
+    (chapter_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "project_id": "novel-demo",
+                "chapter_number": 1,
+                "title": "Rain Letter",
+                "files": ["draft.md", "metadata.json"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = storage.confirm_chapter_content(
+        "novel-demo",
+        1,
+        content="human edited final",
+        filename="rain-letter-final.md",
+        root=tmp_path,
+    )
+
+    assert result["filename"] == "rain-letter-final.md"
+    assert (chapter_dir / "rain-letter-final.md").read_text(encoding="utf-8") == (
+        "human edited final"
+    )
+    metadata = json.loads((chapter_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["status"] == "confirmed"
+    assert metadata["content_source"] == "human_confirmed"
+    assert metadata["final_filename"] == "rain-letter-final.md"
+    assert "rain-letter-final.md" in metadata["files"]
+
+
+def test_confirm_chapter_content_rejects_unsafe_filename(tmp_path):
+    chapter_dir = tmp_path / "novel-demo" / "chapters" / "chapter-0001"
+    chapter_dir.mkdir(parents=True)
+
+    try:
+        storage.confirm_chapter_content(
+            "novel-demo",
+            1,
+            content="human edited final",
+            filename="../escape.md",
+            root=tmp_path,
+        )
+    except ValueError as exc:
+        assert "Invalid final filename" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")

@@ -15,6 +15,7 @@ from novel_assistant.models import (
     UserRequirement,
 )
 from novel_assistant.workflow_runs import WorkflowRunStore
+from novel_assistant.skills import SkillStore
 
 
 class FakeProfileStore:
@@ -59,6 +60,21 @@ class FakeGraphRepository:
 
     def apply_delta(self, delta):
         self.delta_writes.append(delta)
+
+
+class FakeLLMClient:
+    def __init__(self, content):
+        self.content = content
+        self.calls = []
+
+    def complete(self, **kwargs):
+        self.calls.append(kwargs)
+
+        class Response:
+            def __init__(self, content):
+                self.content = content
+
+        return Response(self.content)
 
 
 class SpyPlanner:
@@ -295,6 +311,82 @@ def test_update_llm_profile_returns_404_when_profile_is_missing():
     )
 
     assert response.status_code == 404
+
+
+def test_list_skills_returns_available_skill_markdown_files(tmp_path):
+    skill_dir = tmp_path / "skills" / "humanizer-zh"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: humanizer-zh
+description: 去除 AI 味
+---
+
+请把文本润色得更自然。
+""",
+        encoding="utf-8",
+    )
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            skill_store=SkillStore(tmp_path / "skills"),
+        )
+    )
+
+    response = client.get("/skills")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": "humanizer-zh",
+            "name": "humanizer-zh",
+            "description": "去除 AI 味",
+        }
+    ]
+
+
+def test_apply_skill_uses_selected_llm_profile_and_redacts_key(tmp_path):
+    skill_dir = tmp_path / "skills" / "humanizer-zh"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("请把文本润色得更自然。", encoding="utf-8")
+    store = FakeProfileStore(
+        {
+            "default": LLMProfile(
+                id="default",
+                name="Default",
+                provider="deepseek",
+                model="deepseek-chat",
+                api_key="secret",
+            )
+        }
+    )
+    fake_client = FakeLLMClient("润色后的正文")
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            profile_store=store,
+            skill_store=SkillStore(tmp_path / "skills"),
+            llm_client_factory=lambda profile: fake_client,
+        )
+    )
+
+    response = client.post(
+        "/skills/apply",
+        json={
+            "skill_id": "humanizer-zh",
+            "content": "AI 生成的正文",
+            "llm_profile": "default",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "skill_id": "humanizer-zh",
+        "content": "润色后的正文",
+    }
+    assert fake_client.calls[0]["system_prompt"] == "请把文本润色得更自然。"
+    assert fake_client.calls[0]["user_prompt"] == "AI 生成的正文"
+    assert "secret" not in str(response.json())
 
 
 def test_outline_uses_llm_profile_when_mode_is_llm(monkeypatch):
@@ -598,6 +690,46 @@ def test_get_project_chapters_returns_storage_list(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == [{"chapter_number": 2, "title": "Second"}]
+
+
+def test_get_chapter_content_returns_editable_markdown(tmp_path):
+    chapter_dir = tmp_path / "novel-demo" / "chapters" / "chapter-0001"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "draft.md").write_text("draft content", encoding="utf-8")
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.get("/projects/novel-demo/chapters/1/content")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "project_id": "novel-demo",
+        "chapter_number": 1,
+        "filename": "draft.md",
+        "source": "draft",
+        "content": "draft content",
+    }
+
+
+def test_confirm_chapter_content_saves_named_final_markdown(tmp_path):
+    chapter_dir = tmp_path / "novel-demo" / "chapters" / "chapter-0001"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "draft.md").write_text("draft content", encoding="utf-8")
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.post(
+        "/projects/novel-demo/chapters/1/confirm",
+        json={
+            "filename": "rain-letter-final.md",
+            "content": "human edited final",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["filename"] == "rain-letter-final.md"
+    assert response.json()["status"] == "confirmed"
+    assert (chapter_dir / "rain-letter-final.md").read_text(encoding="utf-8") == (
+        "human edited final"
+    )
 
 
 def test_post_chapter_draft_generates_and_saves_artifacts(tmp_path, monkeypatch):
