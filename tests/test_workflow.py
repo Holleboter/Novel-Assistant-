@@ -29,6 +29,13 @@ def test_initial_state_uses_demo_project_id():
     assert state["user_input"] == "写一个雨夜悬疑故事"
 
 
+def test_initial_state_accepts_project_id_override():
+    state = initial_state("write a mystery", project_id="rain-case")
+
+    assert state["project_id"] == "rain-case"
+    assert state["user_input"] == "write a mystery"
+
+
 def test_workflow_generates_first_chapter_and_writes_graph_updates():
     repo = FakeGraphRepository()
     app = build_workflow(graph_repository=repo)

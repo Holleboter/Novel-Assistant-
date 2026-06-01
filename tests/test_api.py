@@ -39,6 +39,27 @@ class FakeProfileStore:
         return self.profiles.pop(profile_id, None) is not None
 
 
+class FakeGraphRepository:
+    def __init__(self):
+        self.initial_writes = []
+        self.delta_writes = []
+
+    def ensure_constraints(self):
+        return None
+
+    def upsert_initial_graph(self, project_id, blueprint, characters):
+        self.initial_writes.append(
+            {
+                "project_id": project_id,
+                "blueprint": blueprint,
+                "characters": characters,
+            }
+        )
+
+    def apply_delta(self, delta):
+        self.delta_writes.append(delta)
+
+
 class SpyPlanner:
     def __init__(self):
         self.calls = []
@@ -95,6 +116,16 @@ class SpyPlanner:
             )
             for number in range(1, chapter_count + 1)
         ]
+
+    def plan_chapter(self, requirement, blueprint, characters):
+        self.calls.append(("plan_chapter", requirement.premise, blueprint.title))
+        return ChapterPlan(
+            chapter_number=1,
+            title="Chapter 1",
+            goal="Follow the clue",
+            key_events=["The rain starts"],
+            pov_character=characters[0].name,
+        )
 
 
 def test_health_returns_ok():
@@ -335,6 +366,72 @@ def test_outline_returns_404_when_llm_profile_is_missing():
     )
 
     assert response.status_code == 404
+
+
+def test_novel_generation_workflow_runs_graph_and_saves_artifacts(tmp_path):
+    repo = FakeGraphRepository()
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            writing_pipeline=FakeWritingPipeline(),
+            storage_root=tmp_path,
+            graph_repository=repo,
+        )
+    )
+
+    response = client.post(
+        "/workflows/novel-generation",
+        json={
+            "project_id": "novel-demo",
+            "user_input": "write a rainy mystery",
+            "save": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["workflow_id"]
+    assert payload["project_id"] == "novel-demo"
+    assert payload["project_path"] == str(tmp_path / "novel-demo")
+    assert payload["chapter_number"] == 1
+    assert payload["title"] == "Chapter 1"
+    assert payload["passed"] is True
+    assert payload["artifacts"]["chapter_dir"] == str(
+        tmp_path / "novel-demo" / "chapters" / "chapter-0001"
+    )
+    assert (tmp_path / "novel-demo" / "project.json").exists()
+    assert (tmp_path / "novel-demo" / "blueprint.json").exists()
+    assert (tmp_path / "novel-demo" / "chapters" / "chapter-0001" / "final.md").exists()
+    assert repo.initial_writes[0]["project_id"] == "novel-demo"
+    assert repo.delta_writes
+
+
+def test_novel_generation_workflow_can_run_without_saving(tmp_path):
+    repo = FakeGraphRepository()
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            writing_pipeline=FakeWritingPipeline(),
+            storage_root=tmp_path,
+            graph_repository=repo,
+        )
+    )
+
+    response = client.post(
+        "/workflows/novel-generation",
+        json={
+            "project_id": "novel-demo",
+            "user_input": "write a rainy mystery",
+            "save": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["project_path"] is None
+    assert not (tmp_path / "novel-demo").exists()
+    assert repo.initial_writes
+    assert repo.delta_writes
 
 
 def test_create_project_persists_metadata_and_list_projects_returns_summary(tmp_path):

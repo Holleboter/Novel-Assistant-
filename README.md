@@ -239,6 +239,38 @@ curl -X POST http://127.0.0.1:8000/projects/novel-demo/chapters/draft-batch ^
 
 批量生成是同步接口，会逐章写入 `draft.md`、`final.md`、`quality-report.json`、`graph-delta.json` 和 `metadata.json`。当前 `project_id` 只允许字母、数字、下划线和短横线，避免把任意文件路径暴露给项目接口。
 
+### Workflow API
+
+`/outline` 主要用于生成和保存大纲；Workflow API 是一站式链路，会执行需求解析、蓝图生成、人物生成、第一章规划、章节草稿、质检、必要修订、图谱回写和文件保存。
+
+当前 v1 是同步接口，并且只生成第一章。LLM 模式下可能耗时较长，前端应展示 loading，避免重复提交。
+
+```bash
+curl -X POST http://127.0.0.1:8000/workflows/novel-generation ^
+  -H "Content-Type: application/json" ^
+  -d "{\"project_id\":\"novel-demo\",\"user_input\":\"写一本雨夜悬疑小说\",\"save\":true,\"mode\":\"llm\",\"llm_profile\":\"deepseek-default\"}"
+```
+
+返回示例：
+
+```json
+{
+  "workflow_id": "novel-demo-a1b2c3d4e5f6",
+  "status": "completed",
+  "project_id": "novel-demo",
+  "project_path": "projects/novel-demo",
+  "chapter_number": 1,
+  "title": "Rain Letter",
+  "passed": true,
+  "artifacts": {
+    "project_dir": "projects/novel-demo",
+    "chapter_dir": "projects/novel-demo/chapters/chapter-0001"
+  }
+}
+```
+
+`save=false` 时仍会执行 LangGraph 编排和图谱写入，但不会把项目文件保存到本地目录。后续可以把这个同步接口升级为异步任务，使用 `workflow_id` 查询进度和运行记录。
+
 当前 API 还支持：
 
 ```text
@@ -246,6 +278,7 @@ GET  /llm/profiles
 POST /llm/profiles
 PUT  /llm/profiles/{profile_id}
 DELETE /llm/profiles/{profile_id}
+POST /workflows/novel-generation
 POST /projects
 GET  /projects
 GET  /projects/{project_id}/outline

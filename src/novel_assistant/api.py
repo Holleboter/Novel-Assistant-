@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from uuid import uuid4
 from pathlib import Path
 from typing import Any, Literal
 
@@ -9,6 +10,7 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, model_validator
 
 from .config import LLMSettings
+from .graph_repository import GraphRepository
 from .llm_client import LLMClient
 from .llm_profiles import LLMProfile, LLMProfileStore, PublicLLMProfile
 from .models import ChapterPlan
@@ -20,8 +22,10 @@ from .storage import (
     load_outline,
     save_chapter_artifacts,
     save_outline,
+    save_workflow_result,
 )
 from .writing_pipeline import DeterministicWritingPipeline, LLMBackedWritingPipeline
+from .workflow import build_workflow, initial_state
 
 
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -57,6 +61,14 @@ class BatchDraftRequest(DraftRequest):
         return self
 
 
+class NovelGenerationWorkflowRequest(BaseModel):
+    project_id: str = Field(pattern=_PROJECT_ID_PATTERN.pattern)
+    user_input: str
+    save: bool = True
+    mode: Literal["deterministic", "llm"] = "deterministic"
+    llm_profile: str | None = None
+
+
 class LLMProfileRequest(BaseModel):
     profile_id: str | None = None
     name: str | None = None
@@ -75,6 +87,7 @@ def create_app(
     storage_root: str | Path = "projects",
     profile_store: Any | None = None,
     llm_client_factory: Any | None = None,
+    graph_repository: Any | None = None,
 ) -> FastAPI:
     app = FastAPI()
     story_planner = planner or DeterministicStoryPlanner()
@@ -141,6 +154,43 @@ def create_app(
             "outline": jsonable_encoder(chapters),
             "outline_path": outline_path,
         }
+
+    @app.post("/workflows/novel-generation")
+    def novel_generation_workflow(
+        request: NovelGenerationWorkflowRequest,
+    ) -> dict[str, Any]:
+        _validate_project_id(request.project_id)
+        active_planner = story_planner
+        active_writer = writer
+        if request.mode == "llm":
+            profile = _require_profile(profiles, request.llm_profile)
+            llm_client = make_llm_client(profile)
+            active_planner = LLMBackedStoryPlanner(llm_client=llm_client)
+            active_writer = LLMBackedWritingPipeline(llm_client=llm_client)
+
+        repository = graph_repository or GraphRepository()
+        should_close_repository = graph_repository is None
+        try:
+            workflow = build_workflow(
+                graph_repository=repository,
+                writing_pipeline=active_writer,
+                story_planner=active_planner,
+            )
+            result = workflow.invoke(
+                initial_state(
+                    request.user_input,
+                    project_id=request.project_id,
+                )
+            )
+            project_dir = (
+                save_workflow_result(result, root=storage_root)
+                if request.save
+                else None
+            )
+            return _workflow_response(result, project_dir)
+        finally:
+            if should_close_repository and hasattr(repository, "close"):
+                repository.close()
 
     @app.get("/projects")
     def projects() -> list[dict[str, Any]]:
@@ -295,6 +345,30 @@ def create_app(
 def _validate_project_id(project_id: str) -> None:
     if _PROJECT_ID_PATTERN.fullmatch(project_id) is None:
         raise HTTPException(status_code=422, detail="Invalid project_id")
+
+
+def _workflow_response(result: dict[str, Any], project_dir: Path | None) -> dict[str, Any]:
+    chapter_plan = result["chapter_plan"]
+    quality_report = result["quality_report"]
+    chapter_number = chapter_plan.chapter_number
+    chapter_dir = (
+        project_dir / "chapters" / f"chapter-{chapter_number:04d}"
+        if project_dir is not None
+        else None
+    )
+    return {
+        "workflow_id": f"{result['project_id']}-{uuid4().hex[:12]}",
+        "status": "completed",
+        "project_id": result["project_id"],
+        "project_path": str(project_dir) if project_dir is not None else None,
+        "chapter_number": chapter_number,
+        "title": chapter_plan.title,
+        "passed": quality_report.passed,
+        "artifacts": {
+            "project_dir": str(project_dir) if project_dir is not None else None,
+            "chapter_dir": str(chapter_dir) if chapter_dir is not None else None,
+        },
+    }
 
 
 def _find_chapter_plan(outline: list[Any], chapter_number: int) -> ChapterPlan | None:

@@ -35,8 +35,11 @@ class NovelAgentState(TypedDict, total=False):
     graph_delta_written: bool
 
 
-def initial_state(user_input: str) -> NovelAgentState:
-    return {"project_id": "novel-demo", "user_input": user_input}
+def initial_state(
+    user_input: str,
+    project_id: str = "novel-demo",
+) -> NovelAgentState:
+    return {"project_id": project_id, "user_input": user_input}
 
 
 def build_workflow(
