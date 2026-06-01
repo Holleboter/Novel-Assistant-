@@ -9,15 +9,18 @@ description = "MVP core models and settings for Novel Assistant."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi",
     "langgraph",
     "neo4j",
     "pydantic",
     "pydantic-settings",
     "python-dotenv",
+    "uvicorn",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "httpx",
     "pytest",
     "pytest-cov",
 ]

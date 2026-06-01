@@ -112,3 +112,17 @@ python -m pip install -e ".[dev]"
 pytest -q
 python -m novel_assistant.demo
 ```
+
+启动 API 服务：
+
+```bash
+uvicorn novel_assistant.api:app --reload
+```
+
+示例请求：
+
+```bash
+curl -X POST http://127.0.0.1:8000/outline ^
+  -H "Content-Type: application/json" ^
+  -d "{\"project_id\":\"novel-demo\",\"user_input\":\"写一本雨夜悬疑小说\",\"chapter_count\":3,\"save\":true}"
+```
