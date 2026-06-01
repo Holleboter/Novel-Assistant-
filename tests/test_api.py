@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 import novel_assistant.api as api_module
 from novel_assistant.api import create_app
+from novel_assistant.llm_profiles import LLMProfile
 from novel_assistant.models import (
     ChapterDraft,
     ChapterPlan,
@@ -13,6 +14,29 @@ from novel_assistant.models import (
     StoryBlueprint,
     UserRequirement,
 )
+
+
+class FakeProfileStore:
+    def __init__(self, profiles=None):
+        self.profiles = dict(profiles or {})
+        self.calls = []
+
+    def list(self):
+        self.calls.append(("list",))
+        return list(self.profiles.values())
+
+    def get(self, profile_id):
+        self.calls.append(("get", profile_id))
+        return self.profiles.get(profile_id)
+
+    def upsert(self, profile):
+        self.calls.append(("upsert", profile))
+        self.profiles[profile.id] = profile
+        return profile
+
+    def delete(self, profile_id):
+        self.calls.append(("delete", profile_id))
+        return self.profiles.pop(profile_id, None) is not None
 
 
 class SpyPlanner:
@@ -129,6 +153,190 @@ def test_outline_rejects_invalid_chapter_count():
     assert response.status_code == 422
 
 
+def test_llm_profile_crud_returns_sanitized_profiles():
+    store = FakeProfileStore(
+        {
+            "default": LLMProfile(
+                id="default",
+                name="Default",
+                provider="deepseek",
+                model="deepseek-chat",
+                api_key="secret",
+                base_url=None,
+            )
+        }
+    )
+    client = TestClient(create_app(planner=SpyPlanner(), profile_store=store))
+
+    list_response = client.get("/llm/profiles")
+    create_response = client.post(
+        "/llm/profiles",
+        json={
+            "profile_id": "qwen",
+            "name": "Qwen Plus",
+            "provider": "qwen",
+            "model": "qwen-plus",
+            "api_key": "another-secret",
+            "base_url": "https://example.test/v1",
+            "temperature": 0.4,
+            "max_tokens": 3200,
+            "timeout_seconds": 60,
+        },
+    )
+
+    assert list_response.status_code == 200
+    assert list_response.json() == [
+        {
+            "id": "default",
+            "name": "Default",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "base_url": None,
+            "api_key_set": True,
+            "temperature": 0.7,
+            "max_tokens": 4000,
+            "timeout_seconds": 120,
+        }
+    ]
+    assert "api_key" not in create_response.json()
+    assert create_response.json()["api_key_set"] is True
+    assert create_response.json()["temperature"] == 0.4
+    assert store.profiles["qwen"].api_key == "another-secret"
+    update_response = client.put(
+        "/llm/profiles/qwen",
+        json={
+            "name": "Qwen Max",
+            "provider": "qwen",
+            "model": "qwen-max",
+            "api_key": None,
+            "base_url": None,
+        },
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["id"] == "qwen"
+    assert update_response.json()["name"] == "Qwen Max"
+    assert update_response.json()["model"] == "qwen-max"
+    assert update_response.json()["api_key_set"] is False
+    assert update_response.json()["temperature"] == 0.4
+    assert store.profiles["qwen"].api_key is None
+    delete_response = client.delete("/llm/profiles/qwen")
+    assert delete_response.status_code == 204
+
+
+def test_update_llm_profile_preserves_existing_api_key_when_omitted():
+    store = FakeProfileStore(
+        {
+            "default": LLMProfile(
+                id="default",
+                name="Default",
+                provider="deepseek",
+                model="deepseek-chat",
+                api_key="secret",
+                temperature=0.2,
+                max_tokens=2000,
+                timeout_seconds=30,
+            )
+        }
+    )
+    client = TestClient(create_app(planner=SpyPlanner(), profile_store=store))
+
+    response = client.put(
+        "/llm/profiles/default",
+        json={
+            "provider": "deepseek",
+            "model": "deepseek-reasoner",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["api_key_set"] is True
+    assert response.json()["temperature"] == 0.2
+    assert store.profiles["default"].api_key == "secret"
+
+
+def test_update_llm_profile_returns_404_when_profile_is_missing():
+    client = TestClient(create_app(planner=SpyPlanner(), profile_store=FakeProfileStore()))
+
+    response = client.put(
+        "/llm/profiles/missing",
+        json={"provider": "qwen", "model": "qwen-plus", "api_key": "secret"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_outline_uses_llm_profile_when_mode_is_llm(monkeypatch):
+    store = FakeProfileStore(
+        {
+            "default": LLMProfile(
+                id="default",
+                name="Default",
+                provider="deepseek",
+                model="deepseek-chat",
+                api_key="secret",
+            )
+        }
+    )
+    factory_calls = []
+    planner_clients = []
+
+    def fake_llm_client_factory(profile):
+        factory_calls.append(profile)
+        return "fake-client"
+
+    class FakeLLMStoryPlanner(SpyPlanner):
+        def __init__(self, llm_client):
+            super().__init__()
+            planner_clients.append(llm_client)
+
+    monkeypatch.setattr(api_module, "LLMBackedStoryPlanner", FakeLLMStoryPlanner)
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            profile_store=store,
+            llm_client_factory=fake_llm_client_factory,
+        )
+    )
+
+    response = client.post(
+        "/outline",
+        json={
+            "project_id": "novel-demo",
+            "user_input": "write a mystery",
+            "chapter_count": 2,
+            "mode": "llm",
+            "llm_profile": "default",
+        },
+    )
+
+    assert response.status_code == 200
+    assert planner_clients == ["fake-client"]
+    assert factory_calls == [store.profiles["default"]]
+    assert [chapter["chapter_number"] for chapter in response.json()["outline"]] == [1, 2]
+
+
+def test_outline_returns_404_when_llm_profile_is_missing():
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            profile_store=FakeProfileStore(),
+            llm_client_factory=lambda profile: "fake-client",
+        )
+    )
+
+    response = client.post(
+        "/outline",
+        json={
+            "project_id": "novel-demo",
+            "user_input": "write a mystery",
+            "mode": "llm",
+            "llm_profile": "missing",
+        },
+    )
+
+    assert response.status_code == 404
+
+
 def test_get_project_returns_404_when_project_directory_is_missing(tmp_path):
     client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
 
@@ -227,6 +435,101 @@ def test_post_chapter_draft_generates_and_saves_artifacts(tmp_path, monkeypatch)
     assert saved["final_chapter"].content == "Draft for Rain Letter"
     assert saved["quality_report"].passed is True
     assert saved["root"] == tmp_path
+
+
+def test_post_chapter_draft_uses_llm_profile_when_mode_is_llm(tmp_path, monkeypatch):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "outline.json").write_text(
+        """[
+          {
+            "chapter_number": 1,
+            "title": "Rain Letter",
+            "goal": "Find the first clue",
+            "key_events": ["Lights fail"],
+            "pov_character": "Lin"
+          }
+        ]""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        api_module,
+        "save_chapter_artifacts",
+        lambda **kwargs: tmp_path / "novel-demo" / "chapters" / "chapter-0001",
+    )
+    store = FakeProfileStore(
+        {
+            "default": LLMProfile(
+                id="default",
+                name="Default",
+                provider="deepseek",
+                model="deepseek-chat",
+                api_key="secret",
+            )
+        }
+    )
+    factory_calls = []
+    pipeline_clients = []
+
+    def fake_llm_client_factory(profile):
+        factory_calls.append(profile)
+        return "fake-client"
+
+    class FakeLLMWritingPipeline(FakeWritingPipeline):
+        def __init__(self, llm_client):
+            super().__init__()
+            pipeline_clients.append(llm_client)
+
+    monkeypatch.setattr(api_module, "LLMBackedWritingPipeline", FakeLLMWritingPipeline)
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            storage_root=tmp_path,
+            profile_store=store,
+            llm_client_factory=fake_llm_client_factory,
+        )
+    )
+
+    response = client.post(
+        "/projects/novel-demo/chapters/1/draft",
+        json={"mode": "llm", "llm_profile": "default"},
+    )
+
+    assert response.status_code == 200
+    assert pipeline_clients == ["fake-client"]
+    assert factory_calls == [store.profiles["default"]]
+
+
+def test_post_chapter_draft_returns_404_when_llm_profile_is_missing(tmp_path):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "outline.json").write_text(
+        """[
+          {
+            "chapter_number": 1,
+            "title": "Rain Letter",
+            "goal": "Find the first clue",
+            "key_events": ["Lights fail"],
+            "pov_character": "Lin"
+          }
+        ]""",
+        encoding="utf-8",
+    )
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            storage_root=tmp_path,
+            profile_store=FakeProfileStore(),
+            llm_client_factory=lambda profile: "fake-client",
+        )
+    )
+
+    response = client.post(
+        "/projects/novel-demo/chapters/1/draft",
+        json={"mode": "llm", "llm_profile": "missing"},
+    )
+
+    assert response.status_code == 404
 
 
 class FakeWritingPipeline:

@@ -127,9 +127,79 @@ curl -X POST http://127.0.0.1:8000/outline ^
   -d "{\"project_id\":\"novel-demo\",\"user_input\":\"写一本雨夜悬疑小说\",\"chapter_count\":3,\"save\":true}"
 ```
 
+### LLM Profile API
+
+前端可以通过 API 管理运行时大模型配置。真实 `api_key` 会保存到本地 `data/llm-profiles.json`，该文件已加入 `.gitignore`，不要提交到仓库；接口返回时不会包含真实 key，只返回 `api_key_set` 表示是否已配置。
+
+创建配置：
+
+```bash
+curl -X POST http://127.0.0.1:8000/llm/profiles ^
+  -H "Content-Type: application/json" ^
+  -d "{\"profile_id\":\"deepseek-default\",\"name\":\"DeepSeek 默认\",\"provider\":\"deepseek\",\"model\":\"deepseek-chat\",\"api_key\":\"sk-xxx\",\"base_url\":\"https://api.deepseek.com/v1\",\"temperature\":0.7,\"max_tokens\":4000,\"timeout_seconds\":120}"
+```
+
+查询配置列表：
+
+```bash
+curl http://127.0.0.1:8000/llm/profiles
+```
+
+返回示例：
+
+```json
+[
+  {
+    "id": "deepseek-default",
+    "name": "DeepSeek 默认",
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key_set": true,
+    "temperature": 0.7,
+    "max_tokens": 4000,
+    "timeout_seconds": 120
+  }
+]
+```
+
+更新配置：
+
+```bash
+curl -X PUT http://127.0.0.1:8000/llm/profiles/deepseek-default ^
+  -H "Content-Type: application/json" ^
+  -d "{\"provider\":\"deepseek\",\"model\":\"deepseek-chat\",\"api_key\":\"sk-new\",\"base_url\":\"https://api.deepseek.com/v1\"}"
+```
+
+删除配置：
+
+```bash
+curl -X DELETE http://127.0.0.1:8000/llm/profiles/deepseek-default
+```
+
+使用指定配置生成大纲：
+
+```bash
+curl -X POST http://127.0.0.1:8000/outline ^
+  -H "Content-Type: application/json" ^
+  -d "{\"project_id\":\"novel-demo\",\"user_input\":\"写一本雨夜悬疑小说\",\"chapter_count\":3,\"save\":true,\"mode\":\"llm\",\"llm_profile\":\"deepseek-default\"}"
+```
+
+使用指定配置生成章节草稿：
+
+```bash
+curl -X POST http://127.0.0.1:8000/projects/novel-demo/chapters/1/draft ^
+  -H "Content-Type: application/json" ^
+  -d "{\"mode\":\"llm\",\"llm_profile\":\"deepseek-default\"}"
+```
+
 当前 API 还支持：
 
 ```text
+GET  /llm/profiles
+POST /llm/profiles
+PUT  /llm/profiles/{profile_id}
+DELETE /llm/profiles/{profile_id}
 GET  /projects/{project_id}
 GET  /projects/{project_id}/chapters
 POST /projects/{project_id}/chapters/{chapter_number}/draft

@@ -5,3 +5,4 @@ __pycache__/
 .env
 .idea/
 projects/
+data/llm-profiles.json

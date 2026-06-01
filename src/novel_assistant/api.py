@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
+from .config import LLMSettings
+from .llm_client import LLMClient
+from .llm_profiles import LLMProfile, LLMProfileStore, PublicLLMProfile
 from .models import ChapterPlan
-from .planning_pipeline import DeterministicStoryPlanner
+from .planning_pipeline import DeterministicStoryPlanner, LLMBackedStoryPlanner
 from .storage import (
     list_chapters,
     load_outline,
     save_chapter_artifacts,
     save_outline,
 )
-from .writing_pipeline import DeterministicWritingPipeline
+from .writing_pipeline import DeterministicWritingPipeline, LLMBackedWritingPipeline
 
 
 class OutlineRequest(BaseModel):
@@ -23,27 +26,81 @@ class OutlineRequest(BaseModel):
     user_input: str
     chapter_count: int = Field(default=12, ge=1, le=200)
     save: bool = False
+    mode: Literal["deterministic", "llm"] = "deterministic"
+    llm_profile: str | None = None
+
+
+class DraftRequest(BaseModel):
+    mode: Literal["deterministic", "llm"] = "deterministic"
+    llm_profile: str | None = None
+
+
+class LLMProfileRequest(BaseModel):
+    profile_id: str | None = None
+    name: str | None = None
+    provider: str
+    model: str
+    api_key: str | None = None
+    base_url: str | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    max_tokens: int | None = Field(default=None, gt=0)
+    timeout_seconds: int | None = Field(default=None, gt=0)
 
 
 def create_app(
     planner: Any | None = None,
     writing_pipeline: Any | None = None,
     storage_root: str | Path = "projects",
+    profile_store: Any | None = None,
+    llm_client_factory: Any | None = None,
 ) -> FastAPI:
     app = FastAPI()
     story_planner = planner or DeterministicStoryPlanner()
     writer = writing_pipeline or DeterministicWritingPipeline()
+    profiles = profile_store or LLMProfileStore()
+    make_llm_client = llm_client_factory or _default_llm_client_factory
 
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/llm/profiles")
+    def list_llm_profiles() -> list[dict[str, Any]]:
+        return [_public_profile(profile).model_dump() for profile in profiles.list()]
+
+    @app.post("/llm/profiles")
+    def create_llm_profile(request: LLMProfileRequest) -> dict[str, Any]:
+        if request.profile_id is None:
+            raise HTTPException(status_code=422, detail="profile_id is required")
+        profile = _make_profile(request.profile_id, request)
+        return _public_profile(profiles.upsert(profile)).model_dump()
+
+    @app.put("/llm/profiles/{profile_id}")
+    def update_llm_profile(profile_id: str, request: LLMProfileRequest) -> dict[str, Any]:
+        existing_profile = profiles.get(profile_id)
+        if existing_profile is None:
+            raise HTTPException(status_code=404, detail="LLM profile not found")
+        profile = _make_profile(profile_id, request, existing=existing_profile)
+        return _public_profile(profiles.upsert(profile)).model_dump()
+
+    @app.delete("/llm/profiles/{profile_id}", status_code=204)
+    def delete_llm_profile(profile_id: str) -> Response:
+        deleted = profiles.delete(profile_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="LLM profile not found")
+        return Response(status_code=204)
+
     @app.post("/outline")
     def outline(request: OutlineRequest) -> dict[str, Any]:
-        requirement = story_planner.analyze_requirement(request.user_input)
-        blueprint = story_planner.build_blueprint(requirement)
-        characters = story_planner.build_characters(requirement, blueprint)
-        chapters = story_planner.plan_chapters(
+        active_planner = story_planner
+        if request.mode == "llm":
+            profile = _require_profile(profiles, request.llm_profile)
+            active_planner = LLMBackedStoryPlanner(llm_client=make_llm_client(profile))
+
+        requirement = active_planner.analyze_requirement(request.user_input)
+        blueprint = active_planner.build_blueprint(requirement)
+        characters = active_planner.build_characters(requirement, blueprint)
+        chapters = active_planner.plan_chapters(
             requirement,
             blueprint,
             characters,
@@ -84,7 +141,11 @@ def create_app(
         return list_chapters(project_id, root=storage_root)
 
     @app.post("/projects/{project_id}/chapters/{chapter_number}/draft")
-    def draft_chapter(project_id: str, chapter_number: int) -> dict[str, Any]:
+    def draft_chapter(
+        project_id: str,
+        chapter_number: int,
+        request: DraftRequest | None = Body(default=None),
+    ) -> dict[str, Any]:
         project_dir = Path(storage_root) / project_id
         outline_path = project_dir / "outline.json"
         if not project_dir.exists():
@@ -100,14 +161,20 @@ def create_app(
             "active_hooks": plan.key_events,
             "protagonists": [plan.pov_character] if plan.pov_character else [],
         }
-        chapter_draft = writer.draft_chapter(plan, graph_context)
-        quality_report = writer.quality_check(chapter_draft, plan, graph_context)
+        active_writer = writer
+        draft_request = request or DraftRequest()
+        if draft_request.mode == "llm":
+            profile = _require_profile(profiles, draft_request.llm_profile)
+            active_writer = LLMBackedWritingPipeline(llm_client=make_llm_client(profile))
+
+        chapter_draft = active_writer.draft_chapter(plan, graph_context)
+        quality_report = active_writer.quality_check(chapter_draft, plan, graph_context)
         final_chapter = (
-            writer.revise_chapter(chapter_draft, quality_report, plan)
+            active_writer.revise_chapter(chapter_draft, quality_report, plan)
             if quality_report.revision_required
             else chapter_draft
         )
-        graph_delta = writer.extract_graph_delta(project_id, final_chapter)
+        graph_delta = active_writer.extract_graph_delta(project_id, final_chapter)
         chapter_dir = save_chapter_artifacts(
             project_id=project_id,
             chapter_plan=plan,
@@ -133,6 +200,87 @@ def _find_chapter_plan(outline: list[Any], chapter_number: int) -> ChapterPlan |
         if plan.chapter_number == chapter_number:
             return plan
     return None
+
+
+def _default_llm_client_factory(profile: LLMProfile) -> LLMClient:
+    payload = profile.model_dump()
+    settings_payload = {
+        key: value
+        for key, value in payload.items()
+        if key
+        in {
+            "provider",
+            "model",
+            "api_key",
+            "base_url",
+            "temperature",
+            "max_tokens",
+            "timeout_seconds",
+        }
+        and value is not None
+    }
+    return LLMClient(settings=LLMSettings(_env_file=None, **settings_payload))
+
+
+def _make_profile(
+    profile_id: str,
+    request: LLMProfileRequest,
+    existing: LLMProfile | None = None,
+) -> LLMProfile:
+    fields_set = request.model_fields_set
+    return LLMProfile(
+        id=profile_id,
+        name=request.name or (existing.name if existing else profile_id),
+        provider=request.provider,
+        model=request.model,
+        api_key=(
+            request.api_key
+            if "api_key" in fields_set or existing is None
+            else existing.api_key
+        ),
+        base_url=(
+            request.base_url
+            if "base_url" in fields_set or existing is None
+            else existing.base_url
+        ),
+        temperature=(
+            request.temperature
+            if request.temperature is not None
+            else (existing.temperature if existing else 0.7)
+        ),
+        max_tokens=(
+            request.max_tokens
+            if request.max_tokens is not None
+            else (existing.max_tokens if existing else 4000)
+        ),
+        timeout_seconds=(
+            request.timeout_seconds
+            if request.timeout_seconds is not None
+            else (existing.timeout_seconds if existing else 120)
+        ),
+    )
+
+
+def _public_profile(profile: LLMProfile) -> PublicLLMProfile:
+    return PublicLLMProfile(
+        id=profile.id,
+        name=profile.name,
+        provider=profile.provider,
+        model=profile.model,
+        base_url=profile.base_url,
+        api_key_set=profile.api_key is not None,
+        temperature=profile.temperature,
+        max_tokens=profile.max_tokens,
+        timeout_seconds=profile.timeout_seconds,
+    )
+
+
+def _require_profile(profile_store: LLMProfileStore, profile_id: str | None) -> LLMProfile:
+    selected_profile_id = profile_id or "default"
+    profile = profile_store.get(selected_profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="LLM profile not found")
+    return profile
 
 
 app = create_app()
