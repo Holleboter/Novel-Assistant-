@@ -161,41 +161,43 @@ def save_workflow_result(result: dict[str, Any], root: str | Path = "projects") 
     """Persist the MVP workflow result as Markdown plus JSON artifacts."""
     project_id = result["project_id"]
     project_dir = Path(root) / project_id
-    chapter = result["final_chapter"]
-    draft = result["chapter_draft"]
-    chapter_number = _chapter_number(chapter)
-    chapter_dir = project_dir / "chapters" / f"chapter-{chapter_number:04d}"
-    chapter_dir.mkdir(parents=True, exist_ok=True)
+    chapter_results = result.get(
+        "chapter_results",
+        [
+            {
+                "chapter_plan": result["chapter_plan"],
+                "chapter_draft": result["chapter_draft"],
+                "quality_report": result["quality_report"],
+                "final_chapter": result["final_chapter"],
+                "graph_delta": result["graph_delta"],
+            }
+        ],
+    )
+    latest_chapter = max(
+        _chapter_number(chapter_result["final_chapter"])
+        for chapter_result in chapter_results
+    )
 
     _write_json(
         project_dir / "project.json",
         {
             "project_id": project_id,
             "title": result["blueprint"].title,
-            "latest_chapter": chapter_number,
+            "latest_chapter": latest_chapter,
         },
     )
     _write_json(project_dir / "blueprint.json", result["blueprint"])
-    _write_json(chapter_dir / "plan.json", result["chapter_plan"])
-    _write_text(chapter_dir / "draft.md", _content(draft))
-    _write_json(chapter_dir / "quality-report.json", result["quality_report"])
-    _write_text(chapter_dir / "final.md", _content(chapter))
-    _write_json(chapter_dir / "graph-delta.json", result["graph_delta"])
-    _write_json(
-        chapter_dir / "metadata.json",
-        {
-            "project_id": project_id,
-            "chapter_number": chapter_number,
-            "title": _title(chapter),
-            "files": [
-                "plan.json",
-                "draft.md",
-                "quality-report.json",
-                "final.md",
-                "graph-delta.json",
-            ],
-        },
-    )
+    _write_json(project_dir / "outline.json", result.get("outline", [result["chapter_plan"]]))
+    for chapter_result in chapter_results:
+        save_chapter_artifacts(
+            project_id=project_id,
+            chapter_plan=chapter_result["chapter_plan"],
+            chapter_draft=chapter_result["chapter_draft"],
+            quality_report=chapter_result["quality_report"],
+            final_chapter=chapter_result["final_chapter"],
+            graph_delta=chapter_result["graph_delta"],
+            root=root,
+        )
     return project_dir
 
 

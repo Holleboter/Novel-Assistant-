@@ -36,6 +36,20 @@ def test_initial_state_accepts_project_id_override():
     assert state["user_input"] == "write a mystery"
 
 
+def test_initial_state_accepts_chapter_generation_options():
+    state = initial_state(
+        "write a mystery",
+        project_id="rain-case",
+        chapter_count=3,
+        start_chapter=1,
+        end_chapter=2,
+    )
+
+    assert state["chapter_count"] == 3
+    assert state["start_chapter"] == 1
+    assert state["end_chapter"] == 2
+
+
 def test_workflow_generates_first_chapter_and_writes_graph_updates():
     repo = FakeGraphRepository()
     app = build_workflow(graph_repository=repo)
@@ -54,6 +68,28 @@ def test_workflow_generates_first_chapter_and_writes_graph_updates():
     )
     assert repo.delta_writes
     assert repo.delta_writes[0].node_upserts
+
+
+def test_workflow_can_generate_a_selected_chapter_range():
+    repo = FakeGraphRepository()
+    app = build_workflow(graph_repository=repo)
+
+    result = app.invoke(
+        initial_state(
+            "写一本悬疑奇幻小说，主角在雨夜茶馆收到未来来信。",
+            chapter_count=3,
+            start_chapter=1,
+            end_chapter=2,
+        )
+    )
+
+    assert [chapter.chapter_number for chapter in result["outline"]] == [1, 2, 3]
+    assert [
+        chapter_result["chapter_plan"].chapter_number
+        for chapter_result in result["chapter_results"]
+    ] == [1, 2]
+    assert result["chapter_plan"].chapter_number == 1
+    assert len(repo.delta_writes) == 2
 
 
 def test_run_demo_returns_workflow_result_without_real_neo4j(monkeypatch):

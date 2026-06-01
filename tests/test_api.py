@@ -384,9 +384,13 @@ def test_novel_generation_workflow_runs_graph_and_saves_artifacts(tmp_path):
         json={
             "project_id": "novel-demo",
             "user_input": "write a rainy mystery",
+            "chapter_count": 3,
+            "start_chapter": 1,
+            "end_chapter": 2,
             "save": True,
         },
     )
+    projects_response = client.get("/projects")
 
     assert response.status_code == 200
     payload = response.json()
@@ -394,17 +398,27 @@ def test_novel_generation_workflow_runs_graph_and_saves_artifacts(tmp_path):
     assert payload["workflow_id"]
     assert payload["project_id"] == "novel-demo"
     assert payload["project_path"] == str(tmp_path / "novel-demo")
+    assert payload["chapter_count"] == 3
+    assert payload["generated_chapter_count"] == 2
     assert payload["chapter_number"] == 1
     assert payload["title"] == "Chapter 1"
     assert payload["passed"] is True
+    assert [chapter["chapter_number"] for chapter in payload["chapters"]] == [1, 2]
+    assert payload["artifacts"]["outline_path"] == str(
+        tmp_path / "novel-demo" / "outline.json"
+    )
     assert payload["artifacts"]["chapter_dir"] == str(
         tmp_path / "novel-demo" / "chapters" / "chapter-0001"
     )
     assert (tmp_path / "novel-demo" / "project.json").exists()
     assert (tmp_path / "novel-demo" / "blueprint.json").exists()
+    assert (tmp_path / "novel-demo" / "outline.json").exists()
     assert (tmp_path / "novel-demo" / "chapters" / "chapter-0001" / "final.md").exists()
+    assert (tmp_path / "novel-demo" / "chapters" / "chapter-0002" / "final.md").exists()
+    assert projects_response.json()[0]["has_outline"] is True
+    assert projects_response.json()[0]["chapter_count"] == 2
     assert repo.initial_writes[0]["project_id"] == "novel-demo"
-    assert repo.delta_writes
+    assert len(repo.delta_writes) == 2
 
 
 def test_novel_generation_workflow_can_run_without_saving(tmp_path):
@@ -423,15 +437,19 @@ def test_novel_generation_workflow_can_run_without_saving(tmp_path):
         json={
             "project_id": "novel-demo",
             "user_input": "write a rainy mystery",
+            "chapter_count": 2,
+            "start_chapter": 1,
+            "end_chapter": 2,
             "save": False,
         },
     )
 
     assert response.status_code == 200
     assert response.json()["project_path"] is None
+    assert response.json()["generated_chapter_count"] == 2
     assert not (tmp_path / "novel-demo").exists()
     assert repo.initial_writes
-    assert repo.delta_writes
+    assert len(repo.delta_writes) == 2
 
 
 def test_create_project_persists_metadata_and_list_projects_returns_summary(tmp_path):

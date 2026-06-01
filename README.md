@@ -104,6 +104,7 @@ projects/<project_id>/
 ```
 
 Neo4j 保存结构化事实和关系，不直接保存整章正文。
+Workflow 保存链路也会写入 `outline.json`，因此通过 Workflow 生成的项目可以继续使用项目大纲查询和批量章节接口。
 
 ## 开发
 
@@ -241,14 +242,14 @@ curl -X POST http://127.0.0.1:8000/projects/novel-demo/chapters/draft-batch ^
 
 ### Workflow API
 
-`/outline` 主要用于生成和保存大纲；Workflow API 是一站式链路，会执行需求解析、蓝图生成、人物生成、第一章规划、章节草稿、质检、必要修订、图谱回写和文件保存。
+`/outline` 主要用于生成和保存大纲；Workflow API 是一站式链路，会执行需求解析、蓝图生成、人物生成、多章节大纲、章节草稿、质检、必要修订、图谱回写和文件保存。
 
-当前 v1 是同步接口，并且只生成第一章。LLM 模式下可能耗时较长，前端应展示 loading，避免重复提交。
+当前 v1 是同步接口，支持用 `chapter_count` 生成完整大纲，并用 `start_chapter`/`end_chapter` 指定本次要生成的章节范围。LLM 模式下可能耗时较长，前端应展示 loading，避免重复提交。
 
 ```bash
 curl -X POST http://127.0.0.1:8000/workflows/novel-generation ^
   -H "Content-Type: application/json" ^
-  -d "{\"project_id\":\"novel-demo\",\"user_input\":\"写一本雨夜悬疑小说\",\"save\":true,\"mode\":\"llm\",\"llm_profile\":\"deepseek-default\"}"
+  -d "{\"project_id\":\"novel-demo\",\"user_input\":\"写一本雨夜悬疑小说\",\"chapter_count\":12,\"start_chapter\":1,\"end_chapter\":3,\"save\":true,\"mode\":\"llm\",\"llm_profile\":\"deepseek-default\"}"
 ```
 
 返回示例：
@@ -259,17 +260,40 @@ curl -X POST http://127.0.0.1:8000/workflows/novel-generation ^
   "status": "completed",
   "project_id": "novel-demo",
   "project_path": "projects/novel-demo",
+  "chapter_count": 12,
+  "generated_chapter_count": 3,
   "chapter_number": 1,
   "title": "Rain Letter",
   "passed": true,
+  "chapters": [
+    {
+      "chapter_number": 1,
+      "title": "Rain Letter",
+      "passed": true,
+      "chapter_dir": "projects/novel-demo/chapters/chapter-0001"
+    },
+    {
+      "chapter_number": 2,
+      "title": "Broken Clock",
+      "passed": true,
+      "chapter_dir": "projects/novel-demo/chapters/chapter-0002"
+    },
+    {
+      "chapter_number": 3,
+      "title": "Quiet Bridge",
+      "passed": true,
+      "chapter_dir": "projects/novel-demo/chapters/chapter-0003"
+    }
+  ],
   "artifacts": {
     "project_dir": "projects/novel-demo",
+    "outline_path": "projects/novel-demo/outline.json",
     "chapter_dir": "projects/novel-demo/chapters/chapter-0001"
   }
 }
 ```
 
-`save=false` 时仍会执行 LangGraph 编排和图谱写入，但不会把项目文件保存到本地目录。后续可以把这个同步接口升级为异步任务，使用 `workflow_id` 查询进度和运行记录。
+`save=true` 会写入 `project.json`、`blueprint.json`、`outline.json` 和每章的 `draft.md`、`final.md`、`quality-report.json`、`graph-delta.json`、`metadata.json`。`save=false` 时仍会执行 LangGraph 编排和图谱写入，但不会把项目文件保存到本地目录，响应里的 `project_path`、`artifacts.*_path` 和 `chapters[].chapter_dir` 会是 `null`。后续可以把这个同步接口升级为异步任务，使用 `workflow_id` 查询进度和运行记录。
 
 当前 API 还支持：
 

@@ -22,24 +22,38 @@ from .writing_pipeline import DeterministicWritingPipeline
 class NovelAgentState(TypedDict, total=False):
     project_id: str
     user_input: str
+    chapter_count: int
+    start_chapter: int
+    end_chapter: int
     requirement: UserRequirement
     blueprint: StoryBlueprint
     characters: list[CharacterProfile]
     initial_graph_written: bool
+    outline: list[ChapterPlan]
     chapter_plan: ChapterPlan
     graph_context: dict[str, Any]
     chapter_draft: ChapterDraft
     quality_report: QualityReport
     final_chapter: ChapterDraft | RevisedChapterDraft
     graph_delta: GraphDelta
+    chapter_results: list[dict[str, Any]]
     graph_delta_written: bool
 
 
 def initial_state(
     user_input: str,
     project_id: str = "novel-demo",
+    chapter_count: int = 1,
+    start_chapter: int = 1,
+    end_chapter: int | None = None,
 ) -> NovelAgentState:
-    return {"project_id": project_id, "user_input": user_input}
+    return {
+        "project_id": project_id,
+        "user_input": user_input,
+        "chapter_count": chapter_count,
+        "start_chapter": start_chapter,
+        "end_chapter": end_chapter or start_chapter,
+    }
 
 
 def build_workflow(
@@ -84,70 +98,91 @@ def build_workflow(
         )
         return {**state, "initial_graph_written": True}
 
-    def plan_chapter(state: NovelAgentState) -> NovelAgentState:
-        chapter_plan = planner.plan_chapter(
+    def plan_chapters(state: NovelAgentState) -> NovelAgentState:
+        outline = planner.plan_chapters(
             state["requirement"],
             state["blueprint"],
             state["characters"],
+            chapter_count=state.get("chapter_count", 1),
         )
+        return {**state, "outline": outline}
+
+    def generate_chapters(state: NovelAgentState) -> NovelAgentState:
+        chapter_results: list[dict[str, Any]] = []
+        start_chapter = state.get("start_chapter", 1)
+        end_chapter = state.get("end_chapter", start_chapter)
+        selected_plans = [
+            plan
+            for plan in state["outline"]
+            if start_chapter <= plan.chapter_number <= end_chapter
+        ]
+        expected_chapter_numbers = set(range(start_chapter, end_chapter + 1))
+        selected_chapter_numbers = {plan.chapter_number for plan in selected_plans}
+        missing_chapter_numbers = sorted(
+            expected_chapter_numbers - selected_chapter_numbers
+        )
+        if missing_chapter_numbers:
+            raise ValueError(f"Missing chapter plans: {missing_chapter_numbers}")
+
+        for chapter_plan in selected_plans:
+            graph_context = {
+                "protagonists": [chapter_plan.pov_character]
+                if chapter_plan.pov_character
+                else [],
+                "active_hooks": chapter_plan.key_events,
+            }
+            chapter_draft = writer.draft_chapter(chapter_plan, graph_context)
+            quality_report = writer.quality_check(
+                chapter_draft,
+                chapter_plan,
+                graph_context,
+            )
+            final_chapter = (
+                writer.revise_chapter(chapter_draft, quality_report, chapter_plan)
+                if quality_report.revision_required
+                else chapter_draft
+            )
+            graph_delta = writer.extract_graph_delta(state["project_id"], final_chapter)
+            graph_repository.apply_delta(graph_delta)
+            chapter_results.append(
+                {
+                    "chapter_plan": chapter_plan,
+                    "graph_context": graph_context,
+                    "chapter_draft": chapter_draft,
+                    "quality_report": quality_report,
+                    "final_chapter": final_chapter,
+                    "graph_delta": graph_delta,
+                }
+            )
+
+        first_result = chapter_results[0]
         return {
             **state,
-            "chapter_plan": chapter_plan,
-            "graph_context": {
-                "protagonists": [character.name for character in state["characters"][:1]],
-                "active_hooks": chapter_plan.key_events,
-            },
+            "chapter_results": chapter_results,
+            "chapter_plan": first_result["chapter_plan"],
+            "graph_context": first_result["graph_context"],
+            "chapter_draft": first_result["chapter_draft"],
+            "quality_report": first_result["quality_report"],
+            "final_chapter": first_result["final_chapter"],
+            "graph_delta": first_result["graph_delta"],
+            "graph_delta_written": True,
         }
-
-    def write_chapter(state: NovelAgentState) -> NovelAgentState:
-        draft = writer.draft_chapter(state["chapter_plan"], state["graph_context"])
-        return {**state, "chapter_draft": draft}
-
-    def quality_check(state: NovelAgentState) -> NovelAgentState:
-        report = writer.quality_check(
-            state["chapter_draft"],
-            state["chapter_plan"],
-            state["graph_context"],
-        )
-        return {**state, "quality_report": report}
-
-    def revise_or_accept(state: NovelAgentState) -> NovelAgentState:
-        if state["quality_report"].revision_required:
-            final_chapter = writer.revise_chapter(
-                state["chapter_draft"],
-                state["quality_report"],
-                state["chapter_plan"],
-            )
-        else:
-            final_chapter = state["chapter_draft"]
-        return {**state, "final_chapter": final_chapter}
-
-    def extract_and_write_delta(state: NovelAgentState) -> NovelAgentState:
-        delta = writer.extract_graph_delta(state["project_id"], state["final_chapter"])
-        graph_repository.apply_delta(delta)
-        return {**state, "graph_delta": delta, "graph_delta_written": True}
 
     graph = StateGraph(NovelAgentState)
     graph.add_node("analyze_requirement", analyze_requirement)
     graph.add_node("blueprint", build_blueprint)
     graph.add_node("characters", build_characters)
     graph.add_node("write_initial_graph", write_initial_graph)
-    graph.add_node("chapter_plan", plan_chapter)
-    graph.add_node("write_chapter", write_chapter)
-    graph.add_node("quality_check", quality_check)
-    graph.add_node("revise_or_accept", revise_or_accept)
-    graph.add_node("write_graph_delta", extract_and_write_delta)
+    graph.add_node("outline", plan_chapters)
+    graph.add_node("generate_chapters", generate_chapters)
 
     graph.set_entry_point("analyze_requirement")
     graph.add_edge("analyze_requirement", "blueprint")
     graph.add_edge("blueprint", "characters")
     graph.add_edge("characters", "write_initial_graph")
-    graph.add_edge("write_initial_graph", "chapter_plan")
-    graph.add_edge("chapter_plan", "write_chapter")
-    graph.add_edge("write_chapter", "quality_check")
-    graph.add_edge("quality_check", "revise_or_accept")
-    graph.add_edge("revise_or_accept", "write_graph_delta")
-    graph.add_edge("write_graph_delta", END)
+    graph.add_edge("write_initial_graph", "outline")
+    graph.add_edge("outline", "generate_chapters")
+    graph.add_edge("generate_chapters", END)
     return graph.compile()
 
 

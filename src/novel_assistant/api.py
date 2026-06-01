@@ -64,9 +64,22 @@ class BatchDraftRequest(DraftRequest):
 class NovelGenerationWorkflowRequest(BaseModel):
     project_id: str = Field(pattern=_PROJECT_ID_PATTERN.pattern)
     user_input: str
+    chapter_count: int = Field(default=1, ge=1, le=200)
+    start_chapter: int = Field(default=1, ge=1)
+    end_chapter: int | None = Field(default=None, ge=1)
     save: bool = True
     mode: Literal["deterministic", "llm"] = "deterministic"
     llm_profile: str | None = None
+
+    @model_validator(mode="after")
+    def chapter_range_must_fit_outline(self) -> "NovelGenerationWorkflowRequest":
+        if self.end_chapter is None:
+            self.end_chapter = self.start_chapter
+        if self.end_chapter < self.start_chapter:
+            raise ValueError("end_chapter must be greater than or equal to start_chapter")
+        if self.end_chapter > self.chapter_count:
+            raise ValueError("end_chapter must be less than or equal to chapter_count")
+        return self
 
 
 class LLMProfileRequest(BaseModel):
@@ -180,6 +193,9 @@ def create_app(
                 initial_state(
                     request.user_input,
                     project_id=request.project_id,
+                    chapter_count=request.chapter_count,
+                    start_chapter=request.start_chapter,
+                    end_chapter=request.end_chapter,
                 )
             )
             project_dir = (
@@ -351,21 +367,56 @@ def _workflow_response(result: dict[str, Any], project_dir: Path | None) -> dict
     chapter_plan = result["chapter_plan"]
     quality_report = result["quality_report"]
     chapter_number = chapter_plan.chapter_number
+    outline = result.get("outline", [chapter_plan])
+    chapter_results = result.get(
+        "chapter_results",
+        [
+            {
+                "chapter_plan": chapter_plan,
+                "quality_report": quality_report,
+            }
+        ],
+    )
     chapter_dir = (
         project_dir / "chapters" / f"chapter-{chapter_number:04d}"
         if project_dir is not None
         else None
     )
+    chapters = []
+    for chapter_result in chapter_results:
+        result_plan = chapter_result["chapter_plan"]
+        result_report = chapter_result["quality_report"]
+        result_chapter_dir = (
+            project_dir / "chapters" / f"chapter-{result_plan.chapter_number:04d}"
+            if project_dir is not None
+            else None
+        )
+        chapters.append(
+            {
+                "chapter_number": result_plan.chapter_number,
+                "title": result_plan.title,
+                "passed": result_report.passed,
+                "chapter_dir": str(result_chapter_dir)
+                if result_chapter_dir is not None
+                else None,
+            }
+        )
     return {
         "workflow_id": f"{result['project_id']}-{uuid4().hex[:12]}",
         "status": "completed",
         "project_id": result["project_id"],
         "project_path": str(project_dir) if project_dir is not None else None,
+        "chapter_count": len(outline),
+        "generated_chapter_count": len(chapters),
         "chapter_number": chapter_number,
         "title": chapter_plan.title,
         "passed": quality_report.passed,
+        "chapters": chapters,
         "artifacts": {
             "project_dir": str(project_dir) if project_dir is not None else None,
+            "outline_path": str(project_dir / "outline.json")
+            if project_dir is not None
+            else None,
             "chapter_dir": str(chapter_dir) if chapter_dir is not None else None,
         },
     }
