@@ -345,7 +345,7 @@ export function CreationWorkbench({
               disabled={busy === "confirm" || selectedChapter === null}
             >
               {busy === "confirm" ? <Loader2 className="spin" size={17} /> : <Save size={17} />}
-              <span>保存 final</span>
+              <span>保存</span>
             </button>
           </div>
         </div>
