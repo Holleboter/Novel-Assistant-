@@ -392,6 +392,10 @@ button:disabled {
   min-width: 0;
 }
 
+.workbench-messages {
+  display: grid;
+}
+
 .workbench-header {
   display: grid;
   gap: 10px;
@@ -479,6 +483,7 @@ button:disabled {
   height: 100%;
   min-height: 0;
   align-self: stretch;
+  grid-row: 3;
 }
 
 .chapter-sidebar,

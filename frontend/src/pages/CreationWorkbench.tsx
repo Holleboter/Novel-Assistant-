@@ -409,8 +409,10 @@ export function CreationWorkbench({
         </div>
       </header>
 
-      {error ? <div className="workbench-alert error">{error}</div> : null}
-      {notice ? <div className="workbench-alert success">{notice}</div> : null}
+      <div className="workbench-messages">
+        {error ? <div className="workbench-alert error">{error}</div> : null}
+        {notice ? <div className="workbench-alert success">{notice}</div> : null}
+      </div>
 
       <div className="workbench-grid">
         <aside className="chapter-sidebar">
