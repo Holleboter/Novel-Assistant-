@@ -293,7 +293,51 @@ curl -X POST http://127.0.0.1:8000/workflows/novel-generation ^
 }
 ```
 
-`save=true` 会写入 `project.json`、`blueprint.json`、`outline.json` 和每章的 `draft.md`、`final.md`、`quality-report.json`、`graph-delta.json`、`metadata.json`。`save=false` 时仍会执行 LangGraph 编排和图谱写入，但不会把项目文件保存到本地目录，响应里的 `project_path`、`artifacts.*_path` 和 `chapters[].chapter_dir` 会是 `null`。后续可以把这个同步接口升级为异步任务，使用 `workflow_id` 查询进度和运行记录。
+`save=true` 会写入 `project.json`、`blueprint.json`、`outline.json` 和每章的 `draft.md`、`final.md`、`quality-report.json`、`graph-delta.json`、`metadata.json`。`save=false` 时仍会执行 LangGraph 编排和图谱写入，但不会把项目文件保存到本地目录，响应里的 `project_path`、`artifacts.*_path` 和 `chapters[].chapter_dir` 会是 `null`。
+
+每次 Workflow 调用都会在本地创建运行记录，默认保存到 `data/workflow-runs/<workflow_id>.json`。该目录已加入 `.gitignore`，用于本地开发调试，不应提交到仓库。运行记录只保存 `llm_profile` 等请求字段，不保存真实 `api_key`。
+
+查询 Workflow 运行记录：
+
+```bash
+curl http://127.0.0.1:8000/workflows/novel-demo-a1b2c3d4e5f6
+```
+
+返回示例：
+
+```json
+{
+  "workflow_id": "novel-demo-a1b2c3d4e5f6",
+  "project_id": "novel-demo",
+  "status": "completed",
+  "progress": {
+    "total_chapters": 12,
+    "completed_chapters": 3,
+    "current_chapter": 3
+  },
+  "request": {
+    "project_id": "novel-demo",
+    "user_input": "写一本雨夜悬疑小说",
+    "chapter_count": 12,
+    "start_chapter": 1,
+    "end_chapter": 3,
+    "save": true,
+    "mode": "llm",
+    "llm_profile": "deepseek-default"
+  },
+  "result": {
+    "workflow_id": "novel-demo-a1b2c3d4e5f6",
+    "status": "completed",
+    "project_id": "novel-demo",
+    "generated_chapter_count": 3
+  },
+  "error": null,
+  "created_at": "2026-06-01T12:00:00+00:00",
+  "updated_at": "2026-06-01T12:01:30+00:00"
+}
+```
+
+当前执行仍是同步的：`POST /workflows/novel-generation` 会先写入 `running`，成功后更新为 `completed`，异常时更新为 `failed`。下一步可以把执行过程放到后台任务里，现有 `GET /workflows/{workflow_id}` 不需要大改。
 
 当前 API 还支持：
 
@@ -303,6 +347,7 @@ POST /llm/profiles
 PUT  /llm/profiles/{profile_id}
 DELETE /llm/profiles/{profile_id}
 POST /workflows/novel-generation
+GET  /workflows/{workflow_id}
 POST /projects
 GET  /projects
 GET  /projects/{project_id}/outline

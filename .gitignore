@@ -6,3 +6,4 @@ __pycache__/
 .idea/
 projects/
 data/llm-profiles.json
+data/workflow-runs/

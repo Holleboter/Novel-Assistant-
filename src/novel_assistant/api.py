@@ -26,6 +26,7 @@ from .storage import (
 )
 from .writing_pipeline import DeterministicWritingPipeline, LLMBackedWritingPipeline
 from .workflow import build_workflow, initial_state
+from .workflow_runs import WorkflowRunStore
 
 
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -101,12 +102,14 @@ def create_app(
     profile_store: Any | None = None,
     llm_client_factory: Any | None = None,
     graph_repository: Any | None = None,
+    workflow_run_store: WorkflowRunStore | None = None,
 ) -> FastAPI:
     app = FastAPI()
     story_planner = planner or DeterministicStoryPlanner()
     writer = writing_pipeline or DeterministicWritingPipeline()
     profiles = profile_store or LLMProfileStore()
     make_llm_client = llm_client_factory or _default_llm_client_factory
+    workflow_runs = workflow_run_store or WorkflowRunStore()
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -173,17 +176,24 @@ def create_app(
         request: NovelGenerationWorkflowRequest,
     ) -> dict[str, Any]:
         _validate_project_id(request.project_id)
-        active_planner = story_planner
-        active_writer = writer
-        if request.mode == "llm":
-            profile = _require_profile(profiles, request.llm_profile)
-            llm_client = make_llm_client(profile)
-            active_planner = LLMBackedStoryPlanner(llm_client=llm_client)
-            active_writer = LLMBackedWritingPipeline(llm_client=llm_client)
-
-        repository = graph_repository or GraphRepository()
-        should_close_repository = graph_repository is None
+        workflow_id = _new_workflow_id(request.project_id)
+        request_payload = request.model_dump(mode="json")
+        workflow_runs.create(
+            workflow_id=workflow_id,
+            project_id=request.project_id,
+            request=request_payload,
+        )
         try:
+            active_planner = story_planner
+            active_writer = writer
+            if request.mode == "llm":
+                profile = _require_profile(profiles, request.llm_profile)
+                llm_client = make_llm_client(profile)
+                active_planner = LLMBackedStoryPlanner(llm_client=llm_client)
+                active_writer = LLMBackedWritingPipeline(llm_client=llm_client)
+
+            repository = graph_repository or GraphRepository()
+            should_close_repository = graph_repository is None
             workflow = build_workflow(
                 graph_repository=repository,
                 writing_pipeline=active_writer,
@@ -203,10 +213,33 @@ def create_app(
                 if request.save
                 else None
             )
-            return _workflow_response(result, project_dir)
+            response = _workflow_response(result, project_dir, workflow_id)
+            workflow_runs.complete(
+                workflow_id,
+                result=response,
+                progress=_workflow_progress(response),
+            )
+            return response
+        except HTTPException as exc:
+            workflow_runs.fail(workflow_id, error=str(exc.detail))
+            raise
+        except Exception as exc:
+            workflow_runs.fail(workflow_id, error=str(exc))
+            raise
         finally:
-            if should_close_repository and hasattr(repository, "close"):
+            if (
+                "repository" in locals()
+                and should_close_repository
+                and hasattr(repository, "close")
+            ):
                 repository.close()
+
+    @app.get("/workflows/{workflow_id}")
+    def workflow_run(workflow_id: str) -> dict[str, Any]:
+        run = workflow_runs.get(workflow_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Workflow run not found")
+        return run.model_dump(mode="json")
 
     @app.get("/projects")
     def projects() -> list[dict[str, Any]]:
@@ -363,7 +396,15 @@ def _validate_project_id(project_id: str) -> None:
         raise HTTPException(status_code=422, detail="Invalid project_id")
 
 
-def _workflow_response(result: dict[str, Any], project_dir: Path | None) -> dict[str, Any]:
+def _new_workflow_id(project_id: str) -> str:
+    return f"{project_id}-{uuid4().hex[:12]}"
+
+
+def _workflow_response(
+    result: dict[str, Any],
+    project_dir: Path | None,
+    workflow_id: str,
+) -> dict[str, Any]:
     chapter_plan = result["chapter_plan"]
     quality_report = result["quality_report"]
     chapter_number = chapter_plan.chapter_number
@@ -402,7 +443,7 @@ def _workflow_response(result: dict[str, Any], project_dir: Path | None) -> dict
             }
         )
     return {
-        "workflow_id": f"{result['project_id']}-{uuid4().hex[:12]}",
+        "workflow_id": workflow_id,
         "status": "completed",
         "project_id": result["project_id"],
         "project_path": str(project_dir) if project_dir is not None else None,
@@ -419,6 +460,16 @@ def _workflow_response(result: dict[str, Any], project_dir: Path | None) -> dict
             else None,
             "chapter_dir": str(chapter_dir) if chapter_dir is not None else None,
         },
+    }
+
+
+def _workflow_progress(response: dict[str, Any]) -> dict[str, Any]:
+    chapters = response["chapters"]
+    current_chapter = chapters[-1]["chapter_number"] if chapters else None
+    return {
+        "total_chapters": response["chapter_count"],
+        "completed_chapters": response["generated_chapter_count"],
+        "current_chapter": current_chapter,
     }
 
 

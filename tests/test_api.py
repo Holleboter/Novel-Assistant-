@@ -14,6 +14,7 @@ from novel_assistant.models import (
     StoryBlueprint,
     UserRequirement,
 )
+from novel_assistant.workflow_runs import WorkflowRunStore
 
 
 class FakeProfileStore:
@@ -370,12 +371,14 @@ def test_outline_returns_404_when_llm_profile_is_missing():
 
 def test_novel_generation_workflow_runs_graph_and_saves_artifacts(tmp_path):
     repo = FakeGraphRepository()
+    run_store = WorkflowRunStore(tmp_path / "workflow-runs")
     client = TestClient(
         create_app(
             planner=SpyPlanner(),
             writing_pipeline=FakeWritingPipeline(),
             storage_root=tmp_path,
             graph_repository=repo,
+            workflow_run_store=run_store,
         )
     )
 
@@ -391,6 +394,7 @@ def test_novel_generation_workflow_runs_graph_and_saves_artifacts(tmp_path):
         },
     )
     projects_response = client.get("/projects")
+    workflow_response = client.get(f"/workflows/{response.json()['workflow_id']}")
 
     assert response.status_code == 200
     payload = response.json()
@@ -417,8 +421,32 @@ def test_novel_generation_workflow_runs_graph_and_saves_artifacts(tmp_path):
     assert (tmp_path / "novel-demo" / "chapters" / "chapter-0002" / "final.md").exists()
     assert projects_response.json()[0]["has_outline"] is True
     assert projects_response.json()[0]["chapter_count"] == 2
+    assert workflow_response.status_code == 200
+    assert workflow_response.json()["status"] == "completed"
+    assert workflow_response.json()["workflow_id"] == payload["workflow_id"]
+    assert workflow_response.json()["progress"] == {
+        "total_chapters": 3,
+        "completed_chapters": 2,
+        "current_chapter": 2,
+    }
+    assert workflow_response.json()["result"]["generated_chapter_count"] == 2
+    assert workflow_response.json()["error"] is None
     assert repo.initial_writes[0]["project_id"] == "novel-demo"
     assert len(repo.delta_writes) == 2
+
+
+def test_get_workflow_run_returns_404_when_missing(tmp_path):
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            storage_root=tmp_path,
+            workflow_run_store=WorkflowRunStore(tmp_path / "workflow-runs"),
+        )
+    )
+
+    response = client.get("/workflows/missing-run")
+
+    assert response.status_code == 404
 
 
 def test_novel_generation_workflow_can_run_without_saving(tmp_path):
