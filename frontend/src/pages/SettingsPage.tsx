@@ -4,7 +4,6 @@ import type {
   ApiClient,
   LLMProfilePayload,
   LLMProfileSummary,
-  SkillSummary,
 } from "../api/client";
 
 type SettingsPageProps = {
@@ -39,7 +38,6 @@ const emptyForm: ProfileForm = {
 
 export function SettingsPage({ api }: SettingsPageProps) {
   const [profiles, setProfiles] = useState<LLMProfileSummary[]>([]);
-  const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [form, setForm] = useState<ProfileForm>(emptyForm);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,12 +49,7 @@ export function SettingsPage({ api }: SettingsPageProps) {
     setLoading(true);
     setError(null);
     try {
-      const [profileList, skillList] = await Promise.all([
-        api.listLLMProfiles(),
-        api.listSkills(),
-      ]);
-      setProfiles(profileList);
-      setSkills(skillList);
+      setProfiles(await api.listLLMProfiles());
     } catch (err) {
       setError(err instanceof Error ? err.message : "设置加载失败");
     } finally {
@@ -105,6 +98,7 @@ export function SettingsPage({ api }: SettingsPageProps) {
       setError(validationError);
       return;
     }
+
     setBusy("profile-save");
     setError(null);
     const payload = buildProfilePayload(form, editingProfileId === null);
@@ -289,23 +283,6 @@ export function SettingsPage({ api }: SettingsPageProps) {
                   >
                     {busy === `delete-${profile.id}` ? <Loader2 className="spin" size={16} /> : <Trash2 size={16} />}
                   </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-        <section className="panel settings-wide">
-          <div className="panel-header">
-            <h2>Skills</h2>
-            <span>{skills.length} 个</span>
-          </div>
-          <div className="list-stack">
-            {skills.length === 0 ? <div className="empty-state">暂无 Skill</div> : null}
-            {skills.map((skill) => (
-              <div className="config-row" key={skill.id}>
-                <div>
-                  <strong>{skill.name}</strong>
-                  <span>{skill.description || skill.id}</span>
                 </div>
               </div>
             ))}

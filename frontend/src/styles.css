@@ -80,8 +80,7 @@ button {
   padding: 24px;
 }
 
-.page-header,
-.workbench-topbar {
+.page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -102,7 +101,8 @@ button {
 }
 
 .hub-grid,
-.settings-grid {
+.settings-grid,
+.skills-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(340px, 0.8fr);
   gap: 18px;
@@ -209,6 +209,12 @@ button:focus-visible {
   width: 100%;
 }
 
+.primary-button span,
+.secondary-button span,
+.toolbar-button span {
+  white-space: nowrap;
+}
+
 .icon-button.danger {
   border-color: #d28a80;
   color: #8d2b1e;
@@ -306,6 +312,25 @@ button:disabled {
   margin: 16px 0 10px;
 }
 
+.skill-empty-panel,
+.skill-card {
+  display: grid;
+  gap: 12px;
+}
+
+.skill-empty-panel {
+  grid-column: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.skill-card p,
+.skill-empty-panel p {
+  margin: 0;
+  color: #65706c;
+  line-height: 1.6;
+}
+
 .note-stack p {
   margin: 0;
   padding: 10px 12px;
@@ -366,16 +391,45 @@ button:disabled {
   min-width: 0;
 }
 
-.workbench-topbar {
-  min-height: 66px;
-  padding: 10px 14px;
+.workbench-header {
+  display: grid;
+  gap: 10px;
+  padding: 10px 14px 12px;
   border-bottom: 1px solid #ddd8ce;
   background: #fffdf8;
 }
 
+.workbench-primary-row,
+.workbench-action-row,
+.toolbar-group,
+.save-strip,
+.workbench-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.workbench-primary-row {
+  min-height: 44px;
+}
+
+.workbench-action-row {
+  justify-content: space-between;
+}
+
+.toolbar-group {
+  flex-wrap: wrap;
+}
+
+.toolbar-actions {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
 .workbench-title {
   display: grid;
-  min-width: 180px;
+  min-width: 190px;
   margin-right: auto;
 }
 
@@ -386,6 +440,32 @@ button:disabled {
 .workbench-title span {
   color: #65706c;
   font-size: 13px;
+}
+
+.workbench-status-strip span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #ede8df;
+  color: #53615d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.compact-field {
+  min-width: 180px;
+  max-width: 260px;
+  gap: 4px;
+}
+
+.compact-field select {
+  height: 38px;
+}
+
+.save-strip {
+  margin-left: auto;
 }
 
 .filename-input {
@@ -427,6 +507,25 @@ button:disabled {
   background: #fff;
   color: inherit;
   text-align: left;
+}
+
+.sidebar-empty,
+.inspector-empty,
+.editor-empty-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #e4ded3;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.sidebar-empty span,
+.inspector-empty span,
+.editor-empty-panel p {
+  margin: 0;
+  color: #65706c;
+  line-height: 1.6;
 }
 
 .chapter-item.active {
@@ -472,6 +571,20 @@ button:disabled {
     "LXGW WenKai", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.72;
+}
+
+.editor-empty-shell {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 24px;
+  background: #fff;
+}
+
+.editor-empty-panel {
+  max-width: 460px;
+  justify-items: start;
+  padding: 22px;
 }
 
 .inspector {
@@ -820,6 +933,7 @@ button:disabled {
 
   .hub-grid,
   .settings-grid,
+  .skills-grid,
   .profile-form,
   .graph-center,
   .create-project,
@@ -831,8 +945,22 @@ button:disabled {
     height: auto;
   }
 
-  .workbench-topbar {
+  .workbench-header,
+  .workbench-primary-row,
+  .workbench-action-row,
+  .save-strip {
     flex-wrap: wrap;
+  }
+
+  .workbench-action-row,
+  .toolbar-actions,
+  .save-strip {
+    justify-content: flex-start;
+  }
+
+  .compact-field,
+  .filename-input {
+    max-width: none;
   }
 
   .chapter-sidebar,

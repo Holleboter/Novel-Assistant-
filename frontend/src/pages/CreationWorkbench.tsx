@@ -4,6 +4,7 @@ import {
   Check,
   FileCheck,
   Loader2,
+  PlayCircle,
   RefreshCw,
   Save,
   Sparkles,
@@ -81,6 +82,10 @@ export function CreationWorkbench({
     () => groupQualityIssuesBySeverity(qualityReport?.issues ?? []),
     [qualityReport],
   );
+
+  function openWorkflowPanel() {
+    setInspectorTab("workflow");
+  }
 
   async function loadWorkspace() {
     setLoading(true);
@@ -172,6 +177,8 @@ export function CreationWorkbench({
 
   async function handleDraft() {
     if (selectedChapter === null) {
+      openWorkflowPanel();
+      setError("请先通过 Workflow 生成章节，或选择已有章节");
       return;
     }
     setBusy("draft");
@@ -312,64 +319,94 @@ export function CreationWorkbench({
 
   return (
     <section className="workbench">
-      <header className="workbench-topbar">
-        <button className="icon-button" onClick={onBack} title="返回项目">
-          <ArrowLeft size={18} />
-        </button>
-        <div className="workbench-title">
-          <strong>{project?.project_id ?? projectId}</strong>
-          <span>{selectedChapterMeta?.title || "未选择章节"}</span>
+      <header className="workbench-header">
+        <div className="workbench-primary-row">
+          <button className="icon-button" onClick={onBack} title="返回项目">
+            <ArrowLeft size={18} />
+          </button>
+          <div className="workbench-title">
+            <strong>{project?.project_id ?? projectId}</strong>
+            <span>{selectedChapterMeta?.title || "未选择章节"}</span>
+          </div>
+          <div className="workbench-status-strip">
+            <span>{chapters.length} 章</span>
+            <span>{selectedChapterMeta?.status === "confirmed" ? "已确认" : "草稿"}</span>
+          </div>
+          <div className="save-strip">
+            <input
+              className="filename-input"
+              value={finalFilename}
+              onChange={(event) => setFinalFilename(event.target.value)}
+              aria-label="最终文件名"
+            />
+            <button
+              className="primary-button"
+              onClick={handleConfirm}
+              disabled={busy === "confirm" || selectedChapter === null}
+            >
+              {busy === "confirm" ? <Loader2 className="spin" size={17} /> : <Save size={17} />}
+              <span>保存 final</span>
+            </button>
+          </div>
         </div>
-        <select value={selectedSkill} onChange={(event) => setSelectedSkill(event.target.value)}>
-          <option value="">Skill</option>
-          {skills.map((skill) => (
-            <option key={skill.id} value={skill.id}>
-              {skill.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={generationMode}
-          onChange={(event) => setGenerationMode(event.target.value as GenerationMode)}
-          aria-label="生成模式"
-        >
-          <option value="deterministic">本地规则</option>
-          <option value="llm">LLM</option>
-        </select>
-        <select
-          value={selectedProfile}
-          onChange={(event) => setSelectedProfile(event.target.value)}
-          disabled={profiles.length === 0}
-        >
-          <option value="">默认模型</option>
-          {profiles.map((profile) => (
-            <option key={profile.id} value={profile.id}>
-              {profile.name}
-            </option>
-          ))}
-        </select>
-        <button className="toolbar-button" onClick={handlePolish} disabled={busy === "polish"}>
-          {busy === "polish" ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
-          <span>润色</span>
-        </button>
-        <button className="toolbar-button" onClick={handleRecheckQuality} disabled={busy === "quality"}>
-          {busy === "quality" ? <Loader2 className="spin" size={17} /> : <FileCheck size={17} />}
-          <span>重新质检</span>
-        </button>
-        <button className="toolbar-button" onClick={handleDraft} disabled={busy === "draft"}>
-          {busy === "draft" ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
-          <span>生成草稿</span>
-        </button>
-        <input
-          className="filename-input"
-          value={finalFilename}
-          onChange={(event) => setFinalFilename(event.target.value)}
-          aria-label="最终文件名"
-        />
-        <button className="primary-button" onClick={handleConfirm} disabled={busy === "confirm"}>
-          {busy === "confirm" ? <Loader2 className="spin" size={17} /> : <Save size={17} />}
-          <span>保存 final</span>
-        </button>
+        <div className="workbench-action-row">
+          <div className="toolbar-group">
+            <label className="compact-field">
+              Skill
+              <select value={selectedSkill} onChange={(event) => setSelectedSkill(event.target.value)}>
+                <option value="">选择 Skill</option>
+                {skills.map((skill) => (
+                  <option key={skill.id} value={skill.id}>
+                    {skill.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="compact-field">
+              生成模式
+              <select
+                value={generationMode}
+                onChange={(event) => setGenerationMode(event.target.value as GenerationMode)}
+              >
+                <option value="deterministic">本地规则</option>
+                <option value="llm">LLM</option>
+              </select>
+            </label>
+            <label className="compact-field">
+              模型
+              <select
+                value={selectedProfile}
+                onChange={(event) => setSelectedProfile(event.target.value)}
+                disabled={profiles.length === 0}
+              >
+                <option value="">默认模型</option>
+                {profiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="toolbar-group toolbar-actions">
+            <button className="toolbar-button" onClick={handlePolish} disabled={busy === "polish"}>
+              {busy === "polish" ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
+              <span>润色</span>
+            </button>
+            <button className="toolbar-button" onClick={handleRecheckQuality} disabled={busy === "quality"}>
+              {busy === "quality" ? <Loader2 className="spin" size={17} /> : <FileCheck size={17} />}
+              <span>质检</span>
+            </button>
+            <button className="toolbar-button" onClick={handleDraft} disabled={busy === "draft"}>
+              {busy === "draft" ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
+              <span>生成草稿</span>
+            </button>
+            <button className="toolbar-button" onClick={openWorkflowPanel}>
+              <PlayCircle size={17} />
+              <span>Workflow</span>
+            </button>
+          </div>
+        </div>
       </header>
 
       {error ? <div className="workbench-alert error">{error}</div> : null}
@@ -383,7 +420,14 @@ export function CreationWorkbench({
           </div>
           {loading ? <div className="empty-state">加载中</div> : null}
           {!loading && chapters.length === 0 ? (
-            <div className="empty-state">暂无章节，先运行 Workflow 或生成大纲</div>
+            <div className="sidebar-empty">
+              <strong>暂无章节</strong>
+              <span>先运行 Workflow 生成大纲和章节草稿。</span>
+              <button className="secondary-button full" onClick={openWorkflowPanel}>
+                <PlayCircle size={17} />
+                <span>打开运行面板</span>
+              </button>
+            </div>
           ) : null}
           {chapters.map((chapter) => (
             <button
@@ -410,12 +454,25 @@ export function CreationWorkbench({
             </div>
             {busy === "load-chapter" ? <Loader2 className="spin" size={18} /> : null}
           </div>
-          <textarea
-            className="markdown-editor"
-            value={editorContent}
-            onChange={(event) => setEditorContent(event.target.value)}
-            placeholder="选择章节后加载正文"
-          />
+          {selectedChapter === null && !editorContent ? (
+            <div className="editor-empty-shell">
+              <div className="editor-empty-panel">
+                <strong>还没有可编辑章节</strong>
+                <p>先运行 Workflow 生成章节草稿，之后正文会出现在这里，支持润色、质检和人工修改。</p>
+                <button className="primary-button" onClick={openWorkflowPanel}>
+                  <PlayCircle size={17} />
+                  <span>运行 Workflow</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <textarea
+              className="markdown-editor"
+              value={editorContent}
+              onChange={(event) => setEditorContent(event.target.value)}
+              placeholder="选择章节后加载正文"
+            />
+          )}
         </section>
 
         <aside className="inspector">
@@ -455,8 +512,13 @@ export function CreationWorkbench({
                 <QualityReportView report={qualityReport} groups={qualityGroups} />
               ) : null}
               {!qualityLoading && !qualityReport ? (
-                <div className="empty-state">
-                  当前章节暂无质检报告。可以点击顶部“重新质检”生成。
+                <div className="inspector-empty">
+                  <strong>暂无质检报告</strong>
+                  <span>正文生成或编辑后，可重新质检并查看阻断问题。</span>
+                  <button className="secondary-button full" onClick={handleRecheckQuality}>
+                    <FileCheck size={17} />
+                    <span>重新质检</span>
+                  </button>
                 </div>
               ) : null}
             </div>
