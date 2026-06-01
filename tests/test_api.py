@@ -2,8 +2,17 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import novel_assistant.api as api_module
 from novel_assistant.api import create_app
-from novel_assistant.models import ChapterPlan, CharacterProfile, StoryBlueprint, UserRequirement
+from novel_assistant.models import (
+    ChapterDraft,
+    ChapterPlan,
+    CharacterProfile,
+    GraphDelta,
+    QualityReport,
+    StoryBlueprint,
+    UserRequirement,
+)
 
 
 class SpyPlanner:
@@ -118,3 +127,130 @@ def test_outline_rejects_invalid_chapter_count():
     )
 
     assert response.status_code == 422
+
+
+def test_get_project_returns_404_when_project_directory_is_missing(tmp_path):
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.get("/projects/missing-project")
+
+    assert response.status_code == 404
+
+
+def test_get_project_returns_outline_status_and_chapters(tmp_path, monkeypatch):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    outline_path = project_dir / "outline.json"
+    outline_path.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(
+        api_module,
+        "list_chapters",
+        lambda project_id, root: [{"chapter_number": 1, "title": "Chapter 1"}],
+    )
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.get("/projects/novel-demo")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "project_id": "novel-demo",
+        "has_outline": True,
+        "outline_path": str(outline_path),
+        "chapters": [{"chapter_number": 1, "title": "Chapter 1"}],
+    }
+
+
+def test_get_project_chapters_returns_storage_list(tmp_path, monkeypatch):
+    (tmp_path / "novel-demo").mkdir()
+    monkeypatch.setattr(
+        api_module,
+        "list_chapters",
+        lambda project_id, root: [{"chapter_number": 2, "title": "Second"}],
+    )
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.get("/projects/novel-demo/chapters")
+
+    assert response.status_code == 200
+    assert response.json() == [{"chapter_number": 2, "title": "Second"}]
+
+
+def test_post_chapter_draft_generates_and_saves_artifacts(tmp_path, monkeypatch):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "outline.json").write_text(
+        """[
+          {
+            "chapter_number": 1,
+            "title": "Rain Letter",
+            "goal": "Find the first clue",
+            "key_events": ["Lights fail"],
+            "pov_character": "Lin"
+          }
+        ]""",
+        encoding="utf-8",
+    )
+    save_calls = []
+
+    def fake_save_chapter_artifacts(**kwargs):
+        save_calls.append(kwargs)
+        return tmp_path / "novel-demo" / "chapters" / "chapter-0001"
+
+    monkeypatch.setattr(api_module, "save_chapter_artifacts", fake_save_chapter_artifacts)
+    pipeline = FakeWritingPipeline()
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            storage_root=tmp_path,
+            writing_pipeline=pipeline,
+        )
+    )
+
+    response = client.post("/projects/novel-demo/chapters/1/draft")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "chapter_number": 1,
+        "title": "Rain Letter",
+        "passed": True,
+        "chapter_dir": str(tmp_path / "novel-demo" / "chapters" / "chapter-0001"),
+    }
+    assert [call[0] for call in pipeline.calls] == [
+        "draft_chapter",
+        "quality_check",
+        "extract_graph_delta",
+    ]
+    saved = save_calls[0]
+    assert saved["project_id"] == "novel-demo"
+    assert saved["chapter_plan"].title == "Rain Letter"
+    assert saved["chapter_draft"].content == "Draft for Rain Letter"
+    assert saved["final_chapter"].content == "Draft for Rain Letter"
+    assert saved["quality_report"].passed is True
+    assert saved["root"] == tmp_path
+
+
+class FakeWritingPipeline:
+    def __init__(self):
+        self.calls = []
+
+    def draft_chapter(self, plan, graph_context=None):
+        self.calls.append(("draft_chapter", plan.chapter_number, graph_context))
+        return ChapterDraft(
+            chapter_number=plan.chapter_number,
+            title=plan.title,
+            content=f"Draft for {plan.title}",
+            summary="summary",
+            word_count=21,
+        )
+
+    def quality_check(self, draft, plan, graph_context=None):
+        self.calls.append(("quality_check", draft.chapter_number, plan.chapter_number))
+        return QualityReport(score=95, issues=[])
+
+    def revise_chapter(self, draft, report, plan=None):
+        self.calls.append(("revise_chapter", draft.chapter_number))
+        return draft
+
+    def extract_graph_delta(self, project_id, final_chapter):
+        self.calls.append(("extract_graph_delta", project_id, final_chapter.chapter_number))
+        return GraphDelta(project_id=project_id, source_chapter_number=final_chapter.chapter_number)

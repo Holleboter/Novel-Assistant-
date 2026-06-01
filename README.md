@@ -126,3 +126,11 @@ curl -X POST http://127.0.0.1:8000/outline ^
   -H "Content-Type: application/json" ^
   -d "{\"project_id\":\"novel-demo\",\"user_input\":\"写一本雨夜悬疑小说\",\"chapter_count\":3,\"save\":true}"
 ```
+
+当前 API 还支持：
+
+```text
+GET  /projects/{project_id}
+GET  /projects/{project_id}/chapters
+POST /projects/{project_id}/chapters/{chapter_number}/draft
+```
