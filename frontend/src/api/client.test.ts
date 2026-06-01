@@ -59,6 +59,109 @@ describe("createApiClient", () => {
     expect(result.status).toBe("confirmed");
   });
 
+  it("loads a saved chapter quality report", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        score: 72,
+        passed: false,
+        revision_required: true,
+        issues: [
+          {
+            severity: "high",
+            category: "continuity",
+            description: "The clue appears too early.",
+            suggestion: "Move the clue setup.",
+          },
+        ],
+      }),
+    });
+    const client = createApiClient("http://localhost:8000", fetcher);
+
+    const result = await client.getChapterQualityReport("novel-demo", 1);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "http://localhost:8000/projects/novel-demo/chapters/1/quality-report",
+      {
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    expect(result.issues[0].severity).toBe("high");
+  });
+
+  it("manages runtime LLM profiles", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: "qwen",
+          name: "Qwen",
+          provider: "qwen",
+          model: "qwen-plus",
+          base_url: null,
+          api_key_set: true,
+          temperature: 0.4,
+          max_tokens: 3200,
+          timeout_seconds: 60,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: "qwen",
+          name: "Qwen Max",
+          provider: "qwen",
+          model: "qwen-max",
+          base_url: null,
+          api_key_set: false,
+          temperature: 0.4,
+          max_tokens: 3200,
+          timeout_seconds: 60,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        json: async () => null,
+      });
+    const client = createApiClient("http://localhost:8000", fetcher);
+
+    await client.createLLMProfile({
+      profile_id: "qwen",
+      name: "Qwen",
+      provider: "qwen",
+      model: "qwen-plus",
+      api_key: "secret",
+      temperature: 0.4,
+      max_tokens: 3200,
+      timeout_seconds: 60,
+    });
+    await client.updateLLMProfile("qwen", {
+      name: "Qwen Max",
+      provider: "qwen",
+      model: "qwen-max",
+      api_key: null,
+    });
+    await client.deleteLLMProfile("qwen");
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "http://localhost:8000/llm/profiles",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:8000/llm/profiles/qwen",
+      expect.objectContaining({ method: "PUT" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "http://localhost:8000/llm/profiles/qwen",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("throws readable errors when the API responds with a failure", async () => {
     const fetcher = vi.fn().mockResolvedValue({
       ok: false,

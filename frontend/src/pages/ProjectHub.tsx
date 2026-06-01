@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { ArrowRight, Loader2, Plus, RefreshCw, WandSparkles } from "lucide-react";
 import type { ApiClient, ProjectSummary } from "../api/client";
 
@@ -62,7 +62,7 @@ export function ProjectHub({ api, onOpenProject }: ProjectHubProps) {
     }
     setAssistantNotes((notes) => [
       `创意：${cleanIdea}`,
-      "下一步：创建项目后用 Workflow 生成蓝图与章节。",
+      "下一步：创建项目后，用 Workflow 生成蓝图与章节。",
       ...notes,
     ]);
     setIdea("");
@@ -128,7 +128,7 @@ export function ProjectHub({ api, onOpenProject }: ProjectHubProps) {
                 </div>
                 <div className="row-meta">
                   <span>{project.chapter_count} 章</span>
-                  <span>{project.has_outline ? "有大纲" : "未生成大纲"}</span>
+                  <span>{project.has_outline ? "已有大纲" : "未生成大纲"}</span>
                   <ArrowRight size={16} />
                 </div>
               </button>

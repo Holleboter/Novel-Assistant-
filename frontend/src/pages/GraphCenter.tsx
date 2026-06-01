@@ -37,7 +37,10 @@ export function GraphCenter() {
         </div>
         <aside className="graph-side">
           <strong>当前阶段</strong>
-          <p>这里先作为图谱中心入口。下一阶段接入 Neo4j 导出数据、人物关系筛选、剧情时间线和伏笔回收表。</p>
+          <p>
+            这里先作为图谱中心入口。下一阶段接入 Neo4j 导出数据、人物关系筛选、
+            剧情时间线和伏笔回收表。
+          </p>
         </aside>
       </div>
     </section>

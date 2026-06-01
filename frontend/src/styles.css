@@ -209,6 +209,11 @@ button:focus-visible {
   width: 100%;
 }
 
+.icon-button.danger {
+  border-color: #d28a80;
+  color: #8d2b1e;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
@@ -250,11 +255,50 @@ button:disabled {
   font-size: 13px;
 }
 
+.config-row {
+  flex-wrap: wrap;
+}
+
 .row-meta {
   display: flex;
   align-items: center;
   gap: 10px;
   white-space: nowrap;
+}
+
+.row-actions,
+.form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-actions {
+  margin-left: auto;
+}
+
+.profile-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.wide-field,
+.settings-wide {
+  grid-column: 1 / -1;
+}
+
+.checkbox-row {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: 18px;
+  height: 18px;
 }
 
 .assistant-panel textarea {
@@ -481,9 +525,78 @@ button:disabled {
   margin-left: auto;
 }
 
+.quality-score {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  padding: 14px;
+  border: 1px solid #e4ded3;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.quality-score span,
+.quality-score em {
+  color: #65706c;
+  font-style: normal;
+}
+
+.quality-score strong {
+  grid-row: span 2;
+  align-self: center;
+  font-size: 32px;
+  line-height: 1;
+}
+
+.quality-score.pass strong {
+  color: #23663c;
+}
+
+.quality-score.warn strong {
+  color: #b94030;
+}
+
+.issue-group,
+.issue-card {
+  display: grid;
+  gap: 8px;
+}
+
+.issue-group {
+  padding-top: 4px;
+}
+
+.issue-card {
+  padding: 10px;
+  border: 1px solid #e4ded3;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.issue-card span {
+  color: #65706c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.issue-card p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.issue-card em {
+  color: #2f6f73;
+  font-style: normal;
+  line-height: 1.55;
+}
+
 .suggestion-item {
   display: grid;
   align-items: start;
+}
+
+.workflow-prompt {
+  min-height: 96px;
 }
 
 .graph-placeholder {
@@ -707,6 +820,7 @@ button:disabled {
 
   .hub-grid,
   .settings-grid,
+  .profile-form,
   .graph-center,
   .create-project,
   .workbench-grid {

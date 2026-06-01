@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   Check,
@@ -8,12 +8,14 @@ import {
   Save,
   Sparkles,
 } from "lucide-react";
+import { ApiError } from "../api/client";
 import type {
   ApiClient,
   ChapterContent,
   ChapterSummary,
   LLMProfileSummary,
   ProjectDetail,
+  QualityReport,
   SkillSummary,
   WorkflowRun,
 } from "../api/client";
@@ -21,12 +23,23 @@ import {
   buildWorkflowSteps,
   defaultFinalFilename,
   firstSelectableChapter,
+  groupQualityIssuesBySeverity,
 } from "../view-models/workbench";
 
 type CreationWorkbenchProps = {
   api: ApiClient;
   projectId: string;
   onBack: () => void;
+};
+
+type InspectorTab = "quality" | "suggestions" | "graph" | "workflow";
+type GenerationMode = "deterministic" | "llm";
+
+const severityLabel = {
+  blocking: "阻断",
+  high: "高",
+  medium: "中",
+  low: "低",
 };
 
 export function CreationWorkbench({
@@ -42,23 +55,32 @@ export function CreationWorkbench({
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [profiles, setProfiles] = useState<LLMProfileSummary[]>([]);
   const [selectedSkill, setSelectedSkill] = useState("");
-  const [selectedProfile, setSelectedProfile] = useState("default");
+  const [selectedProfile, setSelectedProfile] = useState("");
+  const [generationMode, setGenerationMode] = useState<GenerationMode>("deterministic");
   const [finalFilename, setFinalFilename] = useState("final.md");
   const [workflowId, setWorkflowId] = useState("");
+  const [workflowPrompt, setWorkflowPrompt] = useState(
+    "根据当前项目蓝图和章节目标，生成本章可继续人工编辑的正文。",
+  );
   const [workflowRun, setWorkflowRun] = useState<WorkflowRun | null>(null);
-  const [inspectorTab, setInspectorTab] = useState<
-    "quality" | "suggestions" | "graph" | "workflow"
-  >("quality");
+  const [qualityReport, setQualityReport] = useState<QualityReport | null>(null);
+  const [qualityLoading, setQualityLoading] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("quality");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const qualityRequestSeq = useRef(0);
 
   const selectedChapterMeta = useMemo(
     () => chapters.find((chapter) => chapter.chapter_number === selectedChapter) ?? null,
     [chapters, selectedChapter],
   );
   const workflowSteps = useMemo(() => buildWorkflowSteps(workflowRun), [workflowRun]);
+  const qualityGroups = useMemo(
+    () => groupQualityIssuesBySeverity(qualityReport?.issues ?? []),
+    [qualityReport],
+  );
 
   async function loadWorkspace() {
     setLoading(true);
@@ -74,7 +96,7 @@ export function CreationWorkbench({
       setSkills(skillList);
       setProfiles(profileList);
       setSelectedSkill((current) => current || skillList[0]?.id || "");
-      setSelectedProfile((current) => current || profileList[0]?.id || "default");
+      setSelectedProfile((current) => current || profileList[0]?.id || "");
       const firstChapter = firstSelectableChapter(projectDetail.chapters);
       setSelectedChapter((current) => {
         if (
@@ -114,6 +136,29 @@ export function CreationWorkbench({
     }
   }
 
+  async function loadQualityReport(chapterNumber: number) {
+    const requestId = qualityRequestSeq.current + 1;
+    qualityRequestSeq.current = requestId;
+    setQualityLoading(true);
+    try {
+      const report = await api.getChapterQualityReport(projectId, chapterNumber);
+      if (qualityRequestSeq.current === requestId) {
+        setQualityReport(report);
+      }
+    } catch (err) {
+      if (qualityRequestSeq.current === requestId) {
+        setQualityReport(null);
+        if (!(err instanceof ApiError && err.status === 404)) {
+          setError(err instanceof Error ? err.message : "质检报告加载失败");
+        }
+      }
+    } finally {
+      if (qualityRequestSeq.current === requestId) {
+        setQualityLoading(false);
+      }
+    }
+  }
+
   useEffect(() => {
     void loadWorkspace();
   }, [projectId]);
@@ -121,6 +166,7 @@ export function CreationWorkbench({
   useEffect(() => {
     if (selectedChapter !== null) {
       void loadChapter(selectedChapter);
+      void loadQualityReport(selectedChapter);
     }
   }, [selectedChapter]);
 
@@ -131,9 +177,13 @@ export function CreationWorkbench({
     setBusy("draft");
     setError(null);
     try {
-      await api.draftChapter(projectId, selectedChapter);
+      await api.draftChapter(projectId, selectedChapter, {
+        mode: generationMode,
+        llm_profile: generationMode === "llm" ? selectedProfile || null : null,
+      });
       await loadWorkspace();
       await loadChapter(selectedChapter);
+      await loadQualityReport(selectedChapter);
       setNotice("草稿已生成");
     } catch (err) {
       setError(err instanceof Error ? err.message : "草稿生成失败");
@@ -164,6 +214,31 @@ export function CreationWorkbench({
     }
   }
 
+  async function handleRecheckQuality() {
+    if (selectedChapter === null || !editorContent.trim()) {
+      setError("请选择章节并填写正文后再质检");
+      return;
+    }
+    setBusy("quality");
+    setError(null);
+    const requestId = qualityRequestSeq.current + 1;
+    qualityRequestSeq.current = requestId;
+    try {
+      const report = await api.checkChapterQuality(projectId, selectedChapter, {
+        content: editorContent,
+      });
+      if (qualityRequestSeq.current === requestId) {
+        setQualityReport(report);
+        setInspectorTab("quality");
+        setNotice("质检报告已更新");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "重新质检失败");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleConfirm() {
     if (selectedChapter === null) {
       return;
@@ -185,20 +260,30 @@ export function CreationWorkbench({
   }
 
   async function handleStartWorkflow() {
+    if (!workflowPrompt.trim()) {
+      setError("请先填写 Workflow 创作指令");
+      return;
+    }
     setBusy("workflow");
     setError(null);
     try {
       const result = await api.startNovelWorkflow({
         project_id: projectId,
-        user_input: project?.project_id || projectId,
-        chapter_count: Math.max(chapters.length, 1),
+        user_input: workflowPrompt.trim(),
+        chapter_count: Math.max(chapters.length, selectedChapter ?? 1, 1),
         start_chapter: selectedChapter ?? 1,
         end_chapter: selectedChapter ?? 1,
         save: true,
+        mode: generationMode,
+        llm_profile: generationMode === "llm" ? selectedProfile || null : null,
       });
       setWorkflowId(result.workflow_id);
       await handleLoadWorkflow(result.workflow_id);
       await loadWorkspace();
+      if (selectedChapter !== null) {
+        await loadChapter(selectedChapter);
+        await loadQualityReport(selectedChapter);
+      }
       setNotice("Workflow 已完成");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Workflow 运行失败");
@@ -244,8 +329,17 @@ export function CreationWorkbench({
           ))}
         </select>
         <select
+          value={generationMode}
+          onChange={(event) => setGenerationMode(event.target.value as GenerationMode)}
+          aria-label="生成模式"
+        >
+          <option value="deterministic">本地规则</option>
+          <option value="llm">LLM</option>
+        </select>
+        <select
           value={selectedProfile}
           onChange={(event) => setSelectedProfile(event.target.value)}
+          disabled={profiles.length === 0}
         >
           <option value="">默认模型</option>
           {profiles.map((profile) => (
@@ -257,6 +351,10 @@ export function CreationWorkbench({
         <button className="toolbar-button" onClick={handlePolish} disabled={busy === "polish"}>
           {busy === "polish" ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
           <span>润色</span>
+        </button>
+        <button className="toolbar-button" onClick={handleRecheckQuality} disabled={busy === "quality"}>
+          {busy === "quality" ? <Loader2 className="spin" size={17} /> : <FileCheck size={17} />}
+          <span>重新质检</span>
         </button>
         <button className="toolbar-button" onClick={handleDraft} disabled={busy === "draft"}>
           {busy === "draft" ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
@@ -352,20 +450,41 @@ export function CreationWorkbench({
             <div className="inspector-body">
               <StatusLine icon={<FileCheck size={18} />} label="章节状态" value={selectedChapterMeta?.status || "草稿"} />
               <StatusLine icon={<Check size={18} />} label="内容来源" value={selectedChapterMeta?.content_source || chapterContent?.source || "未加载"} />
-              <p className="muted-text">正式质检报告接口接入后会显示评分、证据和阻断问题。</p>
+              {qualityLoading ? <div className="empty-state">质检报告加载中</div> : null}
+              {!qualityLoading && qualityReport ? (
+                <QualityReportView report={qualityReport} groups={qualityGroups} />
+              ) : null}
+              {!qualityLoading && !qualityReport ? (
+                <div className="empty-state">
+                  当前章节暂无质检报告。可以点击顶部“重新质检”生成。
+                </div>
+              ) : null}
             </div>
           ) : null}
 
           {inspectorTab === "suggestions" ? (
             <div className="inspector-body">
-              <div className="suggestion-item">
-                <strong>节奏</strong>
-                <span>检查每 800-1200 字是否有清晰推进点。</span>
-              </div>
-              <div className="suggestion-item">
-                <strong>去 AI 味</strong>
-                <span>优先使用 Skill 润色，再人工读一遍对话和心理描写。</span>
-              </div>
+              {qualityReport?.issues.length ? (
+                qualityReport.issues
+                  .filter((issue) => issue.suggestion)
+                  .map((issue) => (
+                    <div className="suggestion-item" key={`${issue.category}-${issue.description}`}>
+                      <strong>{issue.category}</strong>
+                      <span>{issue.suggestion}</span>
+                    </div>
+                  ))
+              ) : (
+                <>
+                  <div className="suggestion-item">
+                    <strong>节奏</strong>
+                    <span>检查每 800-1200 字是否有明确推进点。</span>
+                  </div>
+                  <div className="suggestion-item">
+                    <strong>去 AI 味</strong>
+                    <span>优先使用 Skill 润色，再人工读一遍对白和心理描写。</span>
+                  </div>
+                </>
+              )}
             </div>
           ) : null}
 
@@ -380,6 +499,14 @@ export function CreationWorkbench({
 
           {inspectorTab === "workflow" ? (
             <div className="inspector-body">
+              <label>
+                创作指令
+                <textarea
+                  className="workflow-prompt"
+                  value={workflowPrompt}
+                  onChange={(event) => setWorkflowPrompt(event.target.value)}
+                />
+              </label>
               <div className="workflow-control">
                 <input
                   value={workflowId}
@@ -411,12 +538,45 @@ export function CreationWorkbench({
   );
 }
 
+function QualityReportView({
+  report,
+  groups,
+}: {
+  report: QualityReport;
+  groups: ReturnType<typeof groupQualityIssuesBySeverity>;
+}) {
+  return (
+    <>
+      <div className={report.passed ? "quality-score pass" : "quality-score warn"}>
+        <span>评分</span>
+        <strong>{report.score}</strong>
+        <em>{report.passed ? "通过" : "需修改"}</em>
+      </div>
+      {groups.length === 0 ? (
+        <div className="empty-state">未发现明确问题。</div>
+      ) : null}
+      {groups.map((group) => (
+        <div className="issue-group" key={group.severity}>
+          <strong>{severityLabel[group.severity]}优先级</strong>
+          {group.issues.map((issue) => (
+            <div className="issue-card" key={`${issue.category}-${issue.description}`}>
+              <span>{issue.category}</span>
+              <p>{issue.description}</p>
+              {issue.suggestion ? <em>{issue.suggestion}</em> : null}
+            </div>
+          ))}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function StatusLine({
   icon,
   label,
   value,
 }: {
-  icon: React.ReactNode;
+  icon: ReactNode;
   label: string;
   value: string;
 }) {

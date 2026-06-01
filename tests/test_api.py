@@ -725,6 +725,108 @@ def test_get_chapter_content_returns_editable_markdown(tmp_path):
     }
 
 
+def test_get_chapter_quality_report_returns_saved_report(tmp_path):
+    chapter_dir = tmp_path / "novel-demo" / "chapters" / "chapter-0001"
+    chapter_dir.mkdir(parents=True)
+    (chapter_dir / "quality-report.json").write_text(
+        """{
+          "score": 72,
+          "issues": [
+            {
+              "severity": "high",
+              "category": "continuity",
+              "description": "The clue appears before it is discovered.",
+              "suggestion": "Move the clue setup earlier."
+            }
+          ],
+          "revision_required": true,
+          "passed": false
+        }""",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.get("/projects/novel-demo/chapters/1/quality-report")
+
+    assert response.status_code == 200
+    assert response.json()["score"] == 72
+    assert response.json()["passed"] is False
+    assert response.json()["issues"][0]["category"] == "continuity"
+
+
+def test_get_chapter_quality_report_returns_404_when_missing(tmp_path):
+    (tmp_path / "novel-demo" / "chapters" / "chapter-0001").mkdir(parents=True)
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.get("/projects/novel-demo/chapters/1/quality-report")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Quality report not found"
+
+
+def test_post_chapter_quality_report_checks_editor_content_and_saves_report(tmp_path):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "outline.json").write_text(
+        """[
+          {
+            "chapter_number": 1,
+            "title": "Rain Letter",
+            "goal": "Find the first clue",
+            "key_events": ["Lights fail"],
+            "pov_character": "Lin"
+          }
+        ]""",
+        encoding="utf-8",
+    )
+    pipeline = FakeWritingPipeline()
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            storage_root=tmp_path,
+            writing_pipeline=pipeline,
+        )
+    )
+
+    response = client.post(
+        "/projects/novel-demo/chapters/1/quality-report",
+        json={"content": "human edited content"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["score"] == 95
+    assert (tmp_path / "novel-demo" / "chapters" / "chapter-0001" / "quality-report.json").exists()
+    assert pipeline.calls == [("quality_check", 1, 1)]
+
+
+def test_post_chapter_quality_report_returns_404_when_outline_is_missing(tmp_path):
+    (tmp_path / "novel-demo").mkdir()
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.post(
+        "/projects/novel-demo/chapters/1/quality-report",
+        json={"content": "human edited content"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Outline not found"
+
+
+def test_post_chapter_quality_report_returns_404_when_chapter_plan_is_missing(tmp_path):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "outline.json").write_text("[]", encoding="utf-8")
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.post(
+        "/projects/novel-demo/chapters/1/quality-report",
+        json={"content": "human edited content"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Chapter plan not found"
+
+
 def test_confirm_chapter_content_saves_named_final_markdown(tmp_path):
     chapter_dir = tmp_path / "novel-demo" / "chapters" / "chapter-0001"
     chapter_dir.mkdir(parents=True)

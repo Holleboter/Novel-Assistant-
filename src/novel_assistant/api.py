@@ -15,6 +15,7 @@ from .graph_repository import GraphRepository
 from .llm_client import LLMClient
 from .llm_profiles import LLMProfile, LLMProfileStore, PublicLLMProfile
 from .models import ChapterPlan
+from .models import ChapterDraft
 from .planning_pipeline import DeterministicStoryPlanner, LLMBackedStoryPlanner
 from .skills import SkillStore
 from .storage import (
@@ -24,7 +25,9 @@ from .storage import (
     list_chapters,
     load_outline,
     read_chapter_content,
+    read_chapter_quality_report,
     save_chapter_artifacts,
+    save_chapter_quality_report,
     save_outline,
     save_workflow_result,
 )
@@ -108,6 +111,10 @@ class SkillApplyRequest(BaseModel):
 class ConfirmChapterRequest(BaseModel):
     content: str
     filename: str = "final.md"
+
+
+class QualityReportRequest(BaseModel):
+    content: str
 
 
 def create_app(
@@ -348,6 +355,55 @@ def create_app(
             return read_chapter_content(project_id, chapter_number, root=storage_root)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Chapter content not found") from exc
+
+    @app.get("/projects/{project_id}/chapters/{chapter_number}/quality-report")
+    def chapter_quality_report(project_id: str, chapter_number: int) -> dict[str, Any]:
+        _validate_project_id(project_id)
+        try:
+            return read_chapter_quality_report(
+                project_id,
+                chapter_number,
+                root=storage_root,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Quality report not found") from exc
+
+    @app.post("/projects/{project_id}/chapters/{chapter_number}/quality-report")
+    def check_chapter_quality(
+        project_id: str,
+        chapter_number: int,
+        request: QualityReportRequest,
+    ) -> dict[str, Any]:
+        _validate_project_id(project_id)
+        project_dir = Path(storage_root) / project_id
+        outline_path = project_dir / "outline.json"
+        if not project_dir.exists():
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not outline_path.exists():
+            raise HTTPException(status_code=404, detail="Outline not found")
+
+        plan = _find_chapter_plan(load_outline(project_id, root=storage_root), chapter_number)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Chapter plan not found")
+
+        draft = ChapterDraft(
+            chapter_number=chapter_number,
+            title=plan.title,
+            content=request.content,
+            word_count=len(request.content),
+        )
+        graph_context = {
+            "active_hooks": plan.key_events,
+            "protagonists": [plan.pov_character] if plan.pov_character else [],
+        }
+        quality_report = writer.quality_check(draft, plan, graph_context)
+        save_chapter_quality_report(
+            project_id,
+            chapter_number,
+            quality_report,
+            root=storage_root,
+        )
+        return jsonable_encoder(quality_report)
 
     @app.post("/projects/{project_id}/chapters/{chapter_number}/confirm")
     def confirm_chapter(

@@ -47,10 +47,17 @@ export function App() {
       </aside>
       <main className="app-main">
         {route.name === "hub" ? (
-          <ProjectHub api={api} onOpenProject={(projectId) => setRoute({ name: "workbench", projectId })} />
+          <ProjectHub
+            api={api}
+            onOpenProject={(projectId) => setRoute({ name: "workbench", projectId })}
+          />
         ) : null}
         {route.name === "workbench" ? (
-          <CreationWorkbench api={api} projectId={route.projectId} onBack={() => setRoute({ name: "hub" })} />
+          <CreationWorkbench
+            api={api}
+            projectId={route.projectId}
+            onBack={() => setRoute({ name: "hub" })}
+          />
         ) : null}
         {route.name === "graph" ? <GraphCenter /> : null}
         {route.name === "settings" ? <SettingsPage api={api} /> : null}

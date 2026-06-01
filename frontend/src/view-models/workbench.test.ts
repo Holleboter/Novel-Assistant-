@@ -3,6 +3,7 @@ import {
   buildWorkflowSteps,
   defaultFinalFilename,
   firstSelectableChapter,
+  groupQualityIssuesBySeverity,
 } from "./workbench";
 
 describe("workbench view model", () => {
@@ -45,5 +46,35 @@ describe("workbench view model", () => {
       "等待确认",
     ]);
     expect(steps.at(-1)?.state).toBe("current");
+  });
+
+  it("groups quality issues by severity in inspector order", () => {
+    const groups = groupQualityIssuesBySeverity([
+      {
+        severity: "low",
+        category: "style",
+        description: "Dialogue is flat.",
+        suggestion: null,
+      },
+      {
+        severity: "blocking",
+        category: "timeline",
+        description: "The event order conflicts.",
+        suggestion: "Move the reveal.",
+      },
+      {
+        severity: "high",
+        category: "logic",
+        description: "Motivation is unclear.",
+        suggestion: null,
+      },
+    ]);
+
+    expect(groups.map((group) => group.severity)).toEqual([
+      "blocking",
+      "high",
+      "low",
+    ]);
+    expect(groups[0].issues[0].category).toBe("timeline");
   });
 });

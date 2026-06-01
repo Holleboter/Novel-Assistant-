@@ -1,8 +1,13 @@
-import type { ChapterSummary, WorkflowRun } from "../api/client";
+import type { ChapterSummary, QualityIssue, WorkflowRun } from "../api/client";
 
 export type WorkflowStep = {
   label: string;
   state: "pending" | "current" | "done" | "failed";
+};
+
+export type QualityIssueGroup = {
+  severity: QualityIssue["severity"];
+  issues: QualityIssue[];
 };
 
 export function firstSelectableChapter(
@@ -49,6 +54,18 @@ export function buildWorkflowSteps(run: WorkflowRun | null): WorkflowStep[] {
     label,
     state: index < completed ? "done" : index === completed ? "current" : "pending",
   }));
+}
+
+export function groupQualityIssuesBySeverity(
+  issues: QualityIssue[],
+): QualityIssueGroup[] {
+  const order: QualityIssue["severity"][] = ["blocking", "high", "medium", "low"];
+  return order
+    .map((severity) => ({
+      severity,
+      issues: issues.filter((issue) => issue.severity === severity),
+    }))
+    .filter((group) => group.issues.length > 0);
 }
 
 function completedStepCount(run: WorkflowRun): number {

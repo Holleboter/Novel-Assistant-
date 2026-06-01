@@ -76,6 +76,32 @@ export type LLMProfileSummary = {
   timeout_seconds: number;
 };
 
+export type LLMProfilePayload = {
+  profile_id?: string | null;
+  name?: string | null;
+  provider: string;
+  model: string;
+  api_key?: string | null;
+  base_url?: string | null;
+  temperature?: number | null;
+  max_tokens?: number | null;
+  timeout_seconds?: number | null;
+};
+
+export type QualityIssue = {
+  severity: "low" | "medium" | "high" | "blocking";
+  category: string;
+  description: string;
+  suggestion?: string | null;
+};
+
+export type QualityReport = {
+  score: number;
+  issues: QualityIssue[];
+  revision_required: boolean | null;
+  passed: boolean | null;
+};
+
 export type SkillApplyPayload = {
   skill_id: string;
   content: string;
@@ -140,6 +166,9 @@ export function createApiClient(
       headers: { "Content-Type": "application/json" },
       ...(init?.body === undefined ? {} : { body: JSON.stringify(init.body) }),
     });
+    if (response.status === 204) {
+      return undefined as T;
+    }
     const payload = await response.json();
     if (!response.ok) {
       throw new ApiError(errorMessage(payload), response.status);
@@ -160,6 +189,19 @@ export function createApiClient(
     getChapterContent: (projectId: string, chapterNumber: number) =>
       request<ChapterContent>(
         `/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/content`,
+      ),
+    getChapterQualityReport: (projectId: string, chapterNumber: number) =>
+      request<QualityReport>(
+        `/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/quality-report`,
+      ),
+    checkChapterQuality: (
+      projectId: string,
+      chapterNumber: number,
+      payload: { content: string },
+    ) =>
+      request<QualityReport>(
+        `/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/quality-report`,
+        { method: "POST", body: payload },
       ),
     confirmChapter: (
       projectId: string,
@@ -191,6 +233,20 @@ export function createApiClient(
         body: payload,
       }),
     listLLMProfiles: () => request<LLMProfileSummary[]>("/llm/profiles"),
+    createLLMProfile: (payload: LLMProfilePayload) =>
+      request<LLMProfileSummary>("/llm/profiles", {
+        method: "POST",
+        body: payload,
+      }),
+    updateLLMProfile: (profileId: string, payload: LLMProfilePayload) =>
+      request<LLMProfileSummary>(`/llm/profiles/${encodeURIComponent(profileId)}`, {
+        method: "PUT",
+        body: payload,
+      }),
+    deleteLLMProfile: (profileId: string) =>
+      request<void>(`/llm/profiles/${encodeURIComponent(profileId)}`, {
+        method: "DELETE",
+      }),
     startNovelWorkflow: (payload: NovelWorkflowPayload) =>
       request<{ workflow_id: string; status: string; project_id: string }>(
         "/workflows/novel-generation",

@@ -137,6 +137,48 @@ def read_chapter_content(
     raise FileNotFoundError(errno.ENOENT, "No chapter content found", str(chapter_dir))
 
 
+def read_chapter_quality_report(
+    project_id: str,
+    chapter_number: int,
+    root: str | Path = "projects",
+) -> dict[str, Any]:
+    """Return the saved quality report for a chapter."""
+    report_path = _chapter_dir(project_id, chapter_number, root) / "quality-report.json"
+    if not report_path.exists():
+        raise FileNotFoundError(
+            errno.ENOENT,
+            "Quality report not found",
+            str(report_path),
+        )
+    return json.loads(report_path.read_text(encoding="utf-8"))
+
+
+def save_chapter_quality_report(
+    project_id: str,
+    chapter_number: int,
+    quality_report: Any,
+    root: str | Path = "projects",
+) -> Path:
+    """Persist a chapter quality report without confirming final content."""
+    chapter_dir = _chapter_dir(project_id, chapter_number, root)
+    chapter_dir.mkdir(parents=True, exist_ok=True)
+    report_path = chapter_dir / "quality-report.json"
+    _write_json(report_path, quality_report)
+
+    metadata = _read_metadata(chapter_dir)
+    files = set(metadata.get("files", []))
+    files.add("quality-report.json")
+    metadata.update(
+        {
+            "project_id": project_id,
+            "chapter_number": int(chapter_number),
+            "files": sorted(files),
+        }
+    )
+    _write_json(chapter_dir / "metadata.json", metadata)
+    return report_path
+
+
 def confirm_chapter_content(
     project_id: str,
     chapter_number: int,
