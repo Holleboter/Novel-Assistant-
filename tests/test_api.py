@@ -154,6 +154,21 @@ def test_health_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_cors_allows_local_frontend_dev_origin():
+    client = TestClient(create_app(planner=SpyPlanner()))
+
+    response = client.options(
+        "/projects",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
 def test_outline_runs_planner_and_saves_to_configured_storage_root(tmp_path):
     planner = SpyPlanner()
     client = TestClient(create_app(planner=planner, storage_root=tmp_path))

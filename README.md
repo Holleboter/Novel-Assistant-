@@ -120,6 +120,30 @@ python -m novel_assistant.demo
 uvicorn novel_assistant.api:app --reload
 ```
 
+启动前端工作台：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+默认前端会请求 `http://localhost:8000`，后端已允许 `localhost` / `127.0.0.1` 的本地开发端口跨域访问。如需改后端地址，可以设置：
+
+```bash
+VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev
+```
+
+前端验证：
+
+```bash
+cd frontend
+npm test
+npm run build
+```
+
+当前前端已包含项目首页、创作工作台和设置页。创作工作台支持章节列表、正文编辑器、Skill 润色、生成草稿、确认保存 final Markdown、Workflow 状态查询和右侧 Inspector。
+
 示例请求：
 
 ```bash

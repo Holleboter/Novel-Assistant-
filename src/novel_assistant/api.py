@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
 from .config import LLMSettings
@@ -120,6 +121,12 @@ def create_app(
     skill_store: SkillStore | None = None,
 ) -> FastAPI:
     app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     story_planner = planner or DeterministicStoryPlanner()
     writer = writing_pipeline or DeterministicWritingPipeline()
     profiles = profile_store or LLMProfileStore()

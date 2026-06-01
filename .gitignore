@@ -7,3 +7,6 @@ __pycache__/
 projects/
 data/llm-profiles.json
 data/workflow-runs/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
