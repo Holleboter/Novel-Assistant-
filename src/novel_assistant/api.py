@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.encoders import jsonable_encoder
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .config import LLMSettings
 from .llm_client import LLMClient
@@ -13,12 +14,17 @@ from .llm_profiles import LLMProfile, LLMProfileStore, PublicLLMProfile
 from .models import ChapterPlan
 from .planning_pipeline import DeterministicStoryPlanner, LLMBackedStoryPlanner
 from .storage import (
+    create_project,
+    list_projects,
     list_chapters,
     load_outline,
     save_chapter_artifacts,
     save_outline,
 )
 from .writing_pipeline import DeterministicWritingPipeline, LLMBackedWritingPipeline
+
+
+_PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 class OutlineRequest(BaseModel):
@@ -33,6 +39,22 @@ class OutlineRequest(BaseModel):
 class DraftRequest(BaseModel):
     mode: Literal["deterministic", "llm"] = "deterministic"
     llm_profile: str | None = None
+
+
+class ProjectRequest(BaseModel):
+    project_id: str = Field(pattern=_PROJECT_ID_PATTERN.pattern)
+    title: str | None = None
+
+
+class BatchDraftRequest(DraftRequest):
+    start_chapter: int = Field(ge=1)
+    end_chapter: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def end_chapter_must_not_precede_start(self) -> "BatchDraftRequest":
+        if self.end_chapter < self.start_chapter:
+            raise ValueError("end_chapter must be greater than or equal to start_chapter")
+        return self
 
 
 class LLMProfileRequest(BaseModel):
@@ -92,6 +114,7 @@ def create_app(
 
     @app.post("/outline")
     def outline(request: OutlineRequest) -> dict[str, Any]:
+        _validate_project_id(request.project_id)
         active_planner = story_planner
         if request.mode == "llm":
             profile = _require_profile(profiles, request.llm_profile)
@@ -119,8 +142,33 @@ def create_app(
             "outline_path": outline_path,
         }
 
+    @app.get("/projects")
+    def projects() -> list[dict[str, Any]]:
+        return list_projects(root=storage_root)
+
+    @app.post("/projects", status_code=201)
+    def create_project_endpoint(request: ProjectRequest) -> dict[str, Any]:
+        try:
+            project_metadata = create_project(
+                request.project_id,
+                title=request.title,
+                root=storage_root,
+            )
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail="Project already exists") from exc
+
+        project_dir = Path(storage_root) / request.project_id
+        return {
+            "project_id": project_metadata["project_id"],
+            "title": project_metadata["title"],
+            "project_path": str(project_dir),
+            "has_outline": False,
+            "chapter_count": 0,
+        }
+
     @app.get("/projects/{project_id}")
     def project(project_id: str) -> dict[str, Any]:
+        _validate_project_id(project_id)
         project_dir = Path(storage_root) / project_id
         if not project_dir.exists():
             raise HTTPException(status_code=404, detail="Project not found")
@@ -133,12 +181,53 @@ def create_app(
             "chapters": list_chapters(project_id, root=storage_root),
         }
 
+    @app.get("/projects/{project_id}/outline")
+    def project_outline(project_id: str) -> list[Any]:
+        _validate_project_id(project_id)
+        project_dir = Path(storage_root) / project_id
+        if not project_dir.exists():
+            raise HTTPException(status_code=404, detail="Project not found")
+        try:
+            return load_outline(project_id, root=storage_root)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Outline not found") from exc
+
     @app.get("/projects/{project_id}/chapters")
     def chapters(project_id: str) -> list[Any]:
+        _validate_project_id(project_id)
         project_dir = Path(storage_root) / project_id
         if not project_dir.exists():
             raise HTTPException(status_code=404, detail="Project not found")
         return list_chapters(project_id, root=storage_root)
+
+    @app.post("/projects/{project_id}/chapters/draft-batch")
+    def draft_chapter_batch(
+        project_id: str,
+        request: BatchDraftRequest,
+    ) -> dict[str, Any]:
+        _validate_project_id(project_id)
+        project_dir = Path(storage_root) / project_id
+        outline_path = project_dir / "outline.json"
+        if not project_dir.exists():
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not outline_path.exists():
+            raise HTTPException(status_code=404, detail="Outline not found")
+
+        outline = load_outline(project_id, root=storage_root)
+        active_writer = _writer_for_request(request)
+        results = []
+        for chapter_number in range(request.start_chapter, request.end_chapter + 1):
+            plan = _find_chapter_plan(outline, chapter_number)
+            if plan is None:
+                raise HTTPException(status_code=404, detail="Chapter plan not found")
+            results.append(_draft_chapter_from_plan(project_id, plan, active_writer))
+
+        return {
+            "project_id": project_id,
+            "start_chapter": request.start_chapter,
+            "end_chapter": request.end_chapter,
+            "results": results,
+        }
 
     @app.post("/projects/{project_id}/chapters/{chapter_number}/draft")
     def draft_chapter(
@@ -146,6 +235,7 @@ def create_app(
         chapter_number: int,
         request: DraftRequest | None = Body(default=None),
     ) -> dict[str, Any]:
+        _validate_project_id(project_id)
         project_dir = Path(storage_root) / project_id
         outline_path = project_dir / "outline.json"
         if not project_dir.exists():
@@ -157,16 +247,24 @@ def create_app(
         if plan is None:
             raise HTTPException(status_code=404, detail="Chapter plan not found")
 
+        active_writer = _writer_for_request(request or DraftRequest())
+        return _draft_chapter_from_plan(project_id, plan, active_writer)
+
+    def _writer_for_request(draft_request: DraftRequest) -> Any:
+        if draft_request.mode == "llm":
+            profile = _require_profile(profiles, draft_request.llm_profile)
+            return LLMBackedWritingPipeline(llm_client=make_llm_client(profile))
+        return writer
+
+    def _draft_chapter_from_plan(
+        project_id: str,
+        plan: ChapterPlan,
+        active_writer: Any,
+    ) -> dict[str, Any]:
         graph_context = {
             "active_hooks": plan.key_events,
             "protagonists": [plan.pov_character] if plan.pov_character else [],
         }
-        active_writer = writer
-        draft_request = request or DraftRequest()
-        if draft_request.mode == "llm":
-            profile = _require_profile(profiles, draft_request.llm_profile)
-            active_writer = LLMBackedWritingPipeline(llm_client=make_llm_client(profile))
-
         chapter_draft = active_writer.draft_chapter(plan, graph_context)
         quality_report = active_writer.quality_check(chapter_draft, plan, graph_context)
         final_chapter = (
@@ -192,6 +290,11 @@ def create_app(
         }
 
     return app
+
+
+def _validate_project_id(project_id: str) -> None:
+    if _PROJECT_ID_PATTERN.fullmatch(project_id) is None:
+        raise HTTPException(status_code=422, detail="Invalid project_id")
 
 
 def _find_chapter_plan(outline: list[Any], chapter_number: int) -> ChapterPlan | None:

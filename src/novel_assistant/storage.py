@@ -12,6 +12,56 @@ from .models import ChapterDraft, RevisedChapterDraft
 _CHAPTER_DIR_PATTERN = re.compile(r"^chapter-(\d{4})$")
 
 
+def create_project(
+    project_id: str,
+    title: str | None = None,
+    root: str | Path = "projects",
+) -> dict[str, Any]:
+    """Create a project directory and persist project metadata."""
+    project_dir = Path(root) / project_id
+    if project_dir.exists():
+        raise FileExistsError(errno.EEXIST, "Project already exists", str(project_dir))
+
+    project_dir.mkdir(parents=True)
+    metadata = {
+        "project_id": project_id,
+        "title": title,
+    }
+    _write_json(project_dir / "project.json", metadata)
+    return metadata
+
+
+def list_projects(root: str | Path = "projects") -> list[dict[str, Any]]:
+    """Return project summaries sorted by project id."""
+    root_path = Path(root)
+    if not root_path.exists():
+        return []
+
+    projects: list[dict[str, Any]] = []
+    for project_dir in root_path.iterdir():
+        if not project_dir.is_dir():
+            continue
+        project_id = project_dir.name
+        metadata_path = project_dir / "project.json"
+        metadata = (
+            json.loads(metadata_path.read_text(encoding="utf-8"))
+            if metadata_path.exists()
+            else {}
+        )
+        outline_path = project_dir / "outline.json"
+        projects.append(
+            {
+                "project_id": metadata.get("project_id", project_id),
+                "title": metadata.get("title"),
+                "has_outline": outline_path.exists(),
+                "outline_path": str(outline_path) if outline_path.exists() else None,
+                "chapter_count": len(list_chapters(project_id, root=root_path)),
+            }
+        )
+
+    return sorted(projects, key=lambda project: project["project_id"])
+
+
 def load_outline(
     project_id: str, root: str | Path = "projects"
 ) -> list[dict[str, Any]]:

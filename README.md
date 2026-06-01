@@ -193,6 +193,52 @@ curl -X POST http://127.0.0.1:8000/projects/novel-demo/chapters/1/draft ^
   -d "{\"mode\":\"llm\",\"llm_profile\":\"deepseek-default\"}"
 ```
 
+### Project API
+
+创建空项目：
+
+```bash
+curl -X POST http://127.0.0.1:8000/projects ^
+  -H "Content-Type: application/json" ^
+  -d "{\"project_id\":\"novel-demo\",\"title\":\"Rain Letter\"}"
+```
+
+查询项目列表：
+
+```bash
+curl http://127.0.0.1:8000/projects
+```
+
+返回示例：
+
+```json
+[
+  {
+    "project_id": "novel-demo",
+    "title": "Rain Letter",
+    "has_outline": true,
+    "outline_path": "projects/novel-demo/outline.json",
+    "chapter_count": 2
+  }
+]
+```
+
+查询项目大纲：
+
+```bash
+curl http://127.0.0.1:8000/projects/novel-demo/outline
+```
+
+批量生成章节草稿：
+
+```bash
+curl -X POST http://127.0.0.1:8000/projects/novel-demo/chapters/draft-batch ^
+  -H "Content-Type: application/json" ^
+  -d "{\"start_chapter\":1,\"end_chapter\":5,\"mode\":\"llm\",\"llm_profile\":\"deepseek-default\"}"
+```
+
+批量生成是同步接口，会逐章写入 `draft.md`、`final.md`、`quality-report.json`、`graph-delta.json` 和 `metadata.json`。当前 `project_id` 只允许字母、数字、下划线和短横线，避免把任意文件路径暴露给项目接口。
+
 当前 API 还支持：
 
 ```text
@@ -200,7 +246,11 @@ GET  /llm/profiles
 POST /llm/profiles
 PUT  /llm/profiles/{profile_id}
 DELETE /llm/profiles/{profile_id}
+POST /projects
+GET  /projects
+GET  /projects/{project_id}/outline
 GET  /projects/{project_id}
 GET  /projects/{project_id}/chapters
 POST /projects/{project_id}/chapters/{chapter_number}/draft
+POST /projects/{project_id}/chapters/draft-batch
 ```

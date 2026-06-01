@@ -337,6 +337,80 @@ def test_outline_returns_404_when_llm_profile_is_missing():
     assert response.status_code == 404
 
 
+def test_create_project_persists_metadata_and_list_projects_returns_summary(tmp_path):
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    create_response = client.post(
+        "/projects",
+        json={"project_id": "novel-demo", "title": "Rain Letter"},
+    )
+    list_response = client.get("/projects")
+
+    assert create_response.status_code == 201
+    assert create_response.json() == {
+        "project_id": "novel-demo",
+        "title": "Rain Letter",
+        "project_path": str(tmp_path / "novel-demo"),
+        "has_outline": False,
+        "chapter_count": 0,
+    }
+    assert (tmp_path / "novel-demo" / "project.json").exists()
+    assert list_response.status_code == 200
+    assert list_response.json() == [
+        {
+            "project_id": "novel-demo",
+            "title": "Rain Letter",
+            "has_outline": False,
+            "outline_path": None,
+            "chapter_count": 0,
+        }
+    ]
+
+
+def test_create_project_returns_409_when_project_exists(tmp_path):
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+    client.post("/projects", json={"project_id": "novel-demo", "title": "Rain Letter"})
+
+    response = client.post(
+        "/projects",
+        json={"project_id": "novel-demo", "title": "Rain Letter Again"},
+    )
+
+    assert response.status_code == 409
+
+
+def test_get_project_outline_returns_saved_outline(tmp_path):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    outline_path = project_dir / "outline.json"
+    outline_path.write_text(
+        """[
+          {
+            "chapter_number": 1,
+            "title": "Rain Letter",
+            "goal": "Find the first clue",
+            "key_events": ["Lights fail"],
+            "pov_character": "Lin"
+          }
+        ]""",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.get("/projects/novel-demo/outline")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "chapter_number": 1,
+            "title": "Rain Letter",
+            "goal": "Find the first clue",
+            "key_events": ["Lights fail"],
+            "pov_character": "Lin",
+        }
+    ]
+
+
 def test_get_project_returns_404_when_project_directory_is_missing(tmp_path):
     client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
 
@@ -498,6 +572,102 @@ def test_post_chapter_draft_uses_llm_profile_when_mode_is_llm(tmp_path, monkeypa
     assert response.status_code == 200
     assert pipeline_clients == ["fake-client"]
     assert factory_calls == [store.profiles["default"]]
+
+
+def test_post_chapter_draft_batch_generates_requested_range(tmp_path, monkeypatch):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "outline.json").write_text(
+        """[
+          {
+            "chapter_number": 1,
+            "title": "Rain Letter",
+            "goal": "Find the first clue",
+            "key_events": ["Lights fail"],
+            "pov_character": "Lin"
+          },
+          {
+            "chapter_number": 2,
+            "title": "Broken Clock",
+            "goal": "Decode the second clue",
+            "key_events": ["The clock stops"],
+            "pov_character": "Lin"
+          },
+          {
+            "chapter_number": 3,
+            "title": "Quiet Bridge",
+            "goal": "Meet the witness",
+            "key_events": ["A witness disappears"],
+            "pov_character": "Lin"
+          }
+        ]""",
+        encoding="utf-8",
+    )
+    save_calls = []
+
+    def fake_save_chapter_artifacts(**kwargs):
+        save_calls.append(kwargs)
+        chapter_number = kwargs["chapter_plan"].chapter_number
+        return tmp_path / "novel-demo" / "chapters" / f"chapter-{chapter_number:04d}"
+
+    monkeypatch.setattr(api_module, "save_chapter_artifacts", fake_save_chapter_artifacts)
+    pipeline = FakeWritingPipeline()
+    client = TestClient(
+        create_app(
+            planner=SpyPlanner(),
+            storage_root=tmp_path,
+            writing_pipeline=pipeline,
+        )
+    )
+
+    response = client.post(
+        "/projects/novel-demo/chapters/draft-batch",
+        json={"start_chapter": 1, "end_chapter": 2},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "project_id": "novel-demo",
+        "start_chapter": 1,
+        "end_chapter": 2,
+        "results": [
+            {
+                "chapter_number": 1,
+                "title": "Rain Letter",
+                "passed": True,
+                "chapter_dir": str(tmp_path / "novel-demo" / "chapters" / "chapter-0001"),
+            },
+            {
+                "chapter_number": 2,
+                "title": "Broken Clock",
+                "passed": True,
+                "chapter_dir": str(tmp_path / "novel-demo" / "chapters" / "chapter-0002"),
+            },
+        ],
+    }
+    assert [call["chapter_plan"].chapter_number for call in save_calls] == [1, 2]
+    assert [call[0] for call in pipeline.calls] == [
+        "draft_chapter",
+        "quality_check",
+        "extract_graph_delta",
+        "draft_chapter",
+        "quality_check",
+        "extract_graph_delta",
+    ]
+
+
+def test_post_chapter_draft_batch_rejects_invalid_range(tmp_path):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "outline.json").write_text("[]", encoding="utf-8")
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.post(
+        "/projects/novel-demo/chapters/draft-batch",
+        json={"start_chapter": 3, "end_chapter": 1},
+    )
+
+    assert response.status_code == 422
 
 
 def test_post_chapter_draft_returns_404_when_llm_profile_is_missing(tmp_path):
