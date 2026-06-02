@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -523,6 +524,7 @@ def test_novel_generation_workflow_runs_graph_and_saves_artifacts(tmp_path):
     )
     assert (tmp_path / "novel-demo" / "project.json").exists()
     assert (tmp_path / "novel-demo" / "blueprint.json").exists()
+    assert (tmp_path / "novel-demo" / "characters.json").exists()
     assert (tmp_path / "novel-demo" / "outline.json").exists()
     assert (tmp_path / "novel-demo" / "chapters" / "chapter-0001" / "final.md").exists()
     assert (tmp_path / "novel-demo" / "chapters" / "chapter-0002" / "final.md").exists()
@@ -659,6 +661,220 @@ def test_get_project_outline_returns_saved_outline(tmp_path):
             "pov_character": "Lin",
         }
     ]
+
+
+def test_get_project_blueprint_returns_saved_blueprint_document(tmp_path):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "blueprint.json").write_text(
+        """{
+          "title": "Rain Letter",
+          "logline": "A future letter arrives.",
+          "setting": "Old river city",
+          "central_conflict": "Truth or safety.",
+          "themes": ["truth"]
+        }""",
+        encoding="utf-8",
+    )
+    (project_dir / "characters.json").write_text(
+        """[
+          {
+            "name": "Lin",
+            "role": "Protagonist",
+            "motivation": "Find the truth",
+            "arc": "Avoidance to responsibility",
+            "traits": ["careful"]
+          }
+        ]""",
+        encoding="utf-8",
+    )
+    (project_dir / "outline.json").write_text(
+        """[
+          {
+            "chapter_number": 1,
+            "title": "Rain Letter",
+            "goal": "Find the first clue",
+            "key_events": ["Lights fail"],
+            "pov_character": "Lin"
+          }
+        ]""",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.get("/projects/novel-demo/blueprint")
+
+    assert response.status_code == 200
+    assert response.json()["project_id"] == "novel-demo"
+    assert response.json()["blueprint"]["title"] == "Rain Letter"
+    assert response.json()["characters"][0]["name"] == "Lin"
+    assert response.json()["outline"][0]["chapter_number"] == 1
+
+
+def test_get_project_blueprint_preserves_legacy_outline_without_blueprint(tmp_path):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "outline.json").write_text(
+        """[
+          {
+            "chapter_number": 1,
+            "title": "Rain Letter",
+            "goal": "Find the first clue",
+            "key_events": ["Lights fail"],
+            "pov_character": "Lin"
+          }
+        ]""",
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.get("/projects/novel-demo/blueprint")
+
+    assert response.status_code == 200
+    assert response.json()["project_id"] == "novel-demo"
+    assert response.json()["blueprint"] == {
+        "title": "",
+        "logline": "",
+        "setting": "",
+        "central_conflict": "",
+        "themes": [],
+    }
+    assert response.json()["characters"] == []
+    assert response.json()["outline"][0]["title"] == "Rain Letter"
+
+
+def test_post_project_blueprint_saves_blueprint_document(tmp_path):
+    (tmp_path / "novel-demo").mkdir()
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.post(
+        "/projects/novel-demo/blueprint",
+        json={
+            "blueprint": {
+                "title": "Rain Letter",
+                "logline": "A future letter arrives.",
+                "setting": "Old river city",
+                "central_conflict": "Truth or safety.",
+                "themes": ["truth"],
+            },
+            "characters": [
+                {
+                    "name": "Lin",
+                    "role": "Protagonist",
+                    "motivation": "Find the truth",
+                    "arc": "Avoidance to responsibility",
+                    "traits": ["careful"],
+                }
+            ],
+            "outline": [
+                {
+                    "chapter_number": 1,
+                    "title": "Rain Letter",
+                    "goal": "Find the first clue",
+                    "key_events": ["Lights fail"],
+                    "pov_character": "Lin",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["outline"][0]["title"] == "Rain Letter"
+    assert (tmp_path / "novel-demo" / "blueprint.json").exists()
+    assert (tmp_path / "novel-demo" / "characters.json").exists()
+    assert (tmp_path / "novel-demo" / "outline.json").exists()
+    project_metadata = json.loads(
+        (tmp_path / "novel-demo" / "project.json").read_text(encoding="utf-8")
+    )
+    assert project_metadata["title"] == "Rain Letter"
+    assert response.json()["blueprint"]["title"] == "Rain Letter"
+
+
+def test_post_project_blueprint_rejects_invalid_outline_payload(tmp_path):
+    (tmp_path / "novel-demo").mkdir()
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.post(
+        "/projects/novel-demo/blueprint",
+        json={
+            "blueprint": {
+                "title": "Rain Letter",
+                "logline": "A future letter arrives.",
+                "setting": "Old river city",
+                "central_conflict": "Truth or safety.",
+                "themes": ["truth"],
+            },
+            "outline": [{"chapter_number": "not-a-number"}],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_post_project_blueprint_can_clear_project_title(tmp_path):
+    project_dir = tmp_path / "novel-demo"
+    project_dir.mkdir()
+    (project_dir / "project.json").write_text(
+        '{"project_id": "novel-demo", "title": "Old Title"}',
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.post(
+        "/projects/novel-demo/blueprint",
+        json={
+            "blueprint": {
+                "title": "",
+                "logline": "",
+                "setting": "",
+                "central_conflict": "",
+                "themes": [],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    project_metadata = json.loads(
+        (project_dir / "project.json").read_text(encoding="utf-8")
+    )
+    assert project_metadata["title"] is None
+
+
+def test_generate_project_blueprint_uses_planner_and_saves_document(tmp_path):
+    planner = SpyPlanner()
+    (tmp_path / "novel-demo").mkdir()
+    client = TestClient(create_app(planner=planner, storage_root=tmp_path))
+
+    response = client.post(
+        "/projects/novel-demo/blueprint/generate",
+        json={"user_input": "write a rainy mystery", "chapter_count": 2},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["blueprint"]["title"] == "Rain Letter"
+    assert [chapter["chapter_number"] for chapter in payload["outline"]] == [1, 2]
+    assert (tmp_path / "novel-demo" / "blueprint.json").exists()
+    assert (tmp_path / "novel-demo" / "characters.json").exists()
+    assert (tmp_path / "novel-demo" / "outline.json").exists()
+    assert planner.calls[:4] == [
+        ("analyze_requirement", "write a rainy mystery"),
+        ("build_blueprint", "write a rainy mystery"),
+        ("build_characters", "write a rainy mystery", "Rain Letter"),
+        ("plan_chapters", "write a rainy mystery", "Rain Letter", "Lin", 2),
+    ]
+
+
+def test_generate_project_blueprint_rejects_blank_user_input(tmp_path):
+    (tmp_path / "novel-demo").mkdir()
+    client = TestClient(create_app(planner=SpyPlanner(), storage_root=tmp_path))
+
+    response = client.post(
+        "/projects/novel-demo/blueprint/generate",
+        json={"user_input": "   ", "chapter_count": 2},
+    )
+
+    assert response.status_code == 422
 
 
 def test_get_project_returns_404_when_project_directory_is_missing(tmp_path):

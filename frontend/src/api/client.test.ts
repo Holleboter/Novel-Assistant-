@@ -89,6 +89,66 @@ describe("createApiClient", () => {
     expect(result.issues[0].severity).toBe("high");
   });
 
+  it("loads, saves, and generates project blueprints", async () => {
+    const blueprintDocument = {
+      project_id: "novel-demo",
+      blueprint: {
+        title: "Rain Letter",
+        logline: "A future letter arrives.",
+        setting: "Old river city",
+        central_conflict: "Truth or safety.",
+        themes: ["truth"],
+      },
+      characters: [
+        {
+          name: "Lin",
+          role: "Protagonist",
+          motivation: "Find the truth",
+          arc: "Avoidance to responsibility",
+          traits: ["careful"],
+        },
+      ],
+      outline: [
+        {
+          chapter_number: 1,
+          title: "Rain Letter",
+          goal: "Find the first clue",
+          key_events: ["Lights fail"],
+          pov_character: "Lin",
+        },
+      ],
+    };
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => blueprintDocument })
+      .mockResolvedValueOnce({ ok: true, json: async () => blueprintDocument })
+      .mockResolvedValueOnce({ ok: true, json: async () => blueprintDocument });
+    const client = createApiClient("http://localhost:8000", fetcher);
+
+    await client.getProjectBlueprint("novel-demo");
+    await client.saveProjectBlueprint("novel-demo", blueprintDocument);
+    await client.generateProjectBlueprint("novel-demo", {
+      user_input: "write a rainy mystery",
+      chapter_count: 3,
+    });
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      "http://localhost:8000/projects/novel-demo/blueprint",
+      { headers: { "Content-Type": "application/json" } },
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:8000/projects/novel-demo/blueprint",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "http://localhost:8000/projects/novel-demo/blueprint/generate",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("manages runtime LLM profiles", async () => {
     const fetcher = vi
       .fn()

@@ -31,6 +31,7 @@ type CreationWorkbenchProps = {
   api: ApiClient;
   projectId: string;
   onBack: () => void;
+  onOpenBlueprint: () => void;
 };
 
 type InspectorTab = "quality" | "suggestions" | "graph" | "workflow";
@@ -47,6 +48,7 @@ export function CreationWorkbench({
   api,
   projectId,
   onBack,
+  onOpenBlueprint,
 }: CreationWorkbenchProps) {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [chapters, setChapters] = useState<ChapterSummary[]>([]);
@@ -424,9 +426,13 @@ export function CreationWorkbench({
           {!loading && chapters.length === 0 ? (
             <div className="sidebar-empty">
               <strong>暂无章节</strong>
-              <span>先运行 Workflow 生成大纲和章节草稿。</span>
-              <button className="secondary-button full" onClick={openWorkflowPanel}>
+              <span>先到蓝图中心生成或确认小说设定和章节大纲。</span>
+              <button className="secondary-button full" onClick={onOpenBlueprint}>
                 <PlayCircle size={17} />
+                <span>前往蓝图中心</span>
+              </button>
+              <button className="secondary-button full" onClick={openWorkflowPanel}>
+                <Sparkles size={17} />
                 <span>打开运行面板</span>
               </button>
             </div>
@@ -460,10 +466,14 @@ export function CreationWorkbench({
             <div className="editor-empty-shell">
               <div className="editor-empty-panel">
                 <strong>还没有可编辑章节</strong>
-                <p>先运行 Workflow 生成章节草稿，之后正文会出现在这里，支持润色、质检和人工修改。</p>
-                <button className="primary-button" onClick={openWorkflowPanel}>
+                <p>先在蓝图中心确认基础设定、人物和章节大纲，再生成章节草稿。</p>
+                <button className="primary-button" onClick={onOpenBlueprint}>
                   <PlayCircle size={17} />
-                  <span>运行 Workflow</span>
+                  <span>前往蓝图中心</span>
+                </button>
+                <button className="secondary-button" onClick={openWorkflowPanel}>
+                  <Sparkles size={17} />
+                  <span>打开运行面板</span>
                 </button>
               </div>
             </div>

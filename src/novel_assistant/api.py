@@ -16,6 +16,8 @@ from .llm_client import LLMClient
 from .llm_profiles import LLMProfile, LLMProfileStore, PublicLLMProfile
 from .models import ChapterPlan
 from .models import ChapterDraft
+from .models import CharacterProfile
+from .models import StoryBlueprint
 from .planning_pipeline import DeterministicStoryPlanner, LLMBackedStoryPlanner
 from .skills import SkillStore
 from .storage import (
@@ -23,9 +25,11 @@ from .storage import (
     create_project,
     list_projects,
     list_chapters,
+    load_blueprint_document,
     load_outline,
     read_chapter_content,
     read_chapter_quality_report,
+    save_blueprint_document,
     save_chapter_artifacts,
     save_chapter_quality_report,
     save_outline,
@@ -115,6 +119,26 @@ class ConfirmChapterRequest(BaseModel):
 
 class QualityReportRequest(BaseModel):
     content: str
+
+
+class BlueprintDocumentRequest(BaseModel):
+    blueprint: StoryBlueprint
+    characters: list[CharacterProfile] = Field(default_factory=list)
+    outline: list[ChapterPlan] = Field(default_factory=list)
+
+
+class BlueprintGenerateRequest(BaseModel):
+    user_input: str
+    chapter_count: int = Field(default=12, ge=1, le=200)
+    mode: Literal["deterministic", "llm"] = "deterministic"
+    llm_profile: str | None = None
+
+    @model_validator(mode="after")
+    def user_input_must_not_be_blank(self) -> "BlueprintGenerateRequest":
+        self.user_input = self.user_input.strip()
+        if not self.user_input:
+            raise ValueError("user_input must not be blank")
+        return self
 
 
 def create_app(
@@ -339,6 +363,67 @@ def create_app(
             return load_outline(project_id, root=storage_root)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Outline not found") from exc
+
+    @app.get("/projects/{project_id}/blueprint")
+    def project_blueprint(project_id: str) -> dict[str, Any]:
+        _validate_project_id(project_id)
+        project_dir = Path(storage_root) / project_id
+        if not project_dir.exists():
+            raise HTTPException(status_code=404, detail="Project not found")
+        try:
+            return load_blueprint_document(project_id, root=storage_root)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Blueprint not found") from exc
+
+    @app.post("/projects/{project_id}/blueprint")
+    def save_project_blueprint(
+        project_id: str,
+        request: BlueprintDocumentRequest,
+    ) -> dict[str, Any]:
+        _validate_project_id(project_id)
+        project_dir = Path(storage_root) / project_id
+        if not project_dir.exists():
+            raise HTTPException(status_code=404, detail="Project not found")
+        return save_blueprint_document(
+            project_id,
+            blueprint=request.blueprint,
+            characters=request.characters,
+            outline=request.outline,
+            root=storage_root,
+        )
+
+    @app.post("/projects/{project_id}/blueprint/generate")
+    def generate_project_blueprint(
+        project_id: str,
+        request: BlueprintGenerateRequest,
+    ) -> dict[str, Any]:
+        _validate_project_id(project_id)
+        project_dir = Path(storage_root) / project_id
+        if not project_dir.exists():
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        active_planner = story_planner
+        if request.mode == "llm":
+            profile = _require_profile(profiles, request.llm_profile)
+            active_planner = LLMBackedStoryPlanner(
+                llm_client=make_llm_client(profile)
+            )
+        requirement = active_planner.analyze_requirement(request.user_input)
+        blueprint = active_planner.build_blueprint(requirement)
+        characters = active_planner.build_characters(requirement, blueprint)
+        outline = active_planner.plan_chapters(
+            requirement,
+            blueprint,
+            characters,
+            chapter_count=request.chapter_count,
+        )
+        return save_blueprint_document(
+            project_id,
+            blueprint=blueprint,
+            characters=characters,
+            outline=outline,
+            root=storage_root,
+        )
 
     @app.get("/projects/{project_id}/chapters")
     def chapters(project_id: str) -> list[Any]:

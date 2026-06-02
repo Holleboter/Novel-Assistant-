@@ -36,6 +36,44 @@ export type ChapterSummary = {
   final_filename?: string;
 };
 
+export type StoryBlueprint = {
+  title: string;
+  logline: string;
+  setting: string;
+  central_conflict: string;
+  themes: string[];
+};
+
+export type CharacterProfile = {
+  name: string;
+  role: string;
+  motivation: string;
+  arc: string;
+  traits: string[];
+};
+
+export type ChapterPlan = {
+  chapter_number: number;
+  title: string;
+  goal: string;
+  key_events: string[];
+  pov_character: string | null;
+};
+
+export type BlueprintDocument = {
+  project_id: string;
+  blueprint: StoryBlueprint;
+  characters: CharacterProfile[];
+  outline: ChapterPlan[];
+};
+
+export type BlueprintGeneratePayload = {
+  user_input: string;
+  chapter_count?: number;
+  mode?: "deterministic" | "llm";
+  llm_profile?: string | null;
+};
+
 export type ChapterContent = {
   project_id: string;
   chapter_number: number;
@@ -182,6 +220,23 @@ export function createApiClient(
       request<ProjectSummary>("/projects", { method: "POST", body: payload }),
     getProject: (projectId: string) =>
       request<ProjectDetail>(`/projects/${encodeURIComponent(projectId)}`),
+    getProjectBlueprint: (projectId: string) =>
+      request<BlueprintDocument>(
+        `/projects/${encodeURIComponent(projectId)}/blueprint`,
+      ),
+    saveProjectBlueprint: (projectId: string, payload: BlueprintDocument) =>
+      request<BlueprintDocument>(
+        `/projects/${encodeURIComponent(projectId)}/blueprint`,
+        { method: "POST", body: payload },
+      ),
+    generateProjectBlueprint: (
+      projectId: string,
+      payload: BlueprintGeneratePayload,
+    ) =>
+      request<BlueprintDocument>(
+        `/projects/${encodeURIComponent(projectId)}/blueprint/generate`,
+        { method: "POST", body: payload },
+      ),
     listChapters: (projectId: string) =>
       request<ChapterSummary[]>(
         `/projects/${encodeURIComponent(projectId)}/chapters`,

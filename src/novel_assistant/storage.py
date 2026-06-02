@@ -75,6 +75,57 @@ def load_outline(
     return json.loads(outline_path.read_text(encoding="utf-8"))
 
 
+def load_blueprint_document(
+    project_id: str,
+    root: str | Path = "projects",
+) -> dict[str, Any]:
+    """Load the project blueprint, characters, and outline as one document."""
+    project_dir = Path(root) / project_id
+    blueprint_path = project_dir / "blueprint.json"
+    characters_path = project_dir / "characters.json"
+    outline_path = project_dir / "outline.json"
+    return {
+        "project_id": project_id,
+        "blueprint": (
+            json.loads(blueprint_path.read_text(encoding="utf-8"))
+            if blueprint_path.exists()
+            else {
+                "title": "",
+                "logline": "",
+                "setting": "",
+                "central_conflict": "",
+                "themes": [],
+            }
+        ),
+        "characters": (
+            json.loads(characters_path.read_text(encoding="utf-8"))
+            if characters_path.exists()
+            else []
+        ),
+        "outline": (
+            json.loads(outline_path.read_text(encoding="utf-8"))
+            if outline_path.exists()
+            else []
+        ),
+    }
+
+
+def save_blueprint_document(
+    project_id: str,
+    blueprint: Any,
+    characters: list[Any],
+    outline: list[Any],
+    root: str | Path = "projects",
+) -> dict[str, Any]:
+    """Persist a project blueprint document in separate artifact files."""
+    project_dir = Path(root) / project_id
+    _write_json(project_dir / "blueprint.json", blueprint)
+    _write_json(project_dir / "characters.json", characters)
+    _write_json(project_dir / "outline.json", outline)
+    _sync_project_title(project_dir, blueprint)
+    return load_blueprint_document(project_id, root=root)
+
+
 def list_chapters(
     project_id: str, root: str | Path = "projects"
 ) -> list[dict[str, Any]]:
@@ -297,6 +348,7 @@ def save_workflow_result(result: dict[str, Any], root: str | Path = "projects") 
         },
     )
     _write_json(project_dir / "blueprint.json", result["blueprint"])
+    _write_json(project_dir / "characters.json", result.get("characters", []))
     _write_json(project_dir / "outline.json", result.get("outline", [result["chapter_plan"]]))
     for chapter_result in chapter_results:
         save_chapter_artifacts(
@@ -335,6 +387,18 @@ def _read_metadata(chapter_dir: Path) -> dict[str, Any]:
     return json.loads(metadata_path.read_text(encoding="utf-8"))
 
 
+def _sync_project_title(project_dir: Path, blueprint: Any) -> None:
+    title = _optional_field(blueprint, "title")
+    metadata_path = project_dir / "project.json"
+    metadata = (
+        json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata_path.exists()
+        else {"project_id": project_dir.name}
+    )
+    metadata["title"] = title or None
+    _write_json(metadata_path, metadata)
+
+
 def _to_jsonable(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -351,6 +415,12 @@ def _field(value: Any, name: str) -> Any:
     if isinstance(value, dict):
         return value[name]
     return getattr(value, name)
+
+
+def _optional_field(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
 
 
 def _content_text(value: Any) -> str:

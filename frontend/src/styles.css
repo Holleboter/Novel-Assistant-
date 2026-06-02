@@ -94,6 +94,18 @@ button {
   line-height: 1.2;
 }
 
+.page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.page-actions select {
+  min-width: 220px;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: #65706c;
@@ -330,6 +342,126 @@ button:disabled {
   margin: 0;
   color: #65706c;
   line-height: 1.6;
+}
+
+.blueprint-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.blueprint-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.blueprint-project-card,
+.blueprint-tab {
+  border: 1px solid #e4ded3;
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.blueprint-project-card {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+}
+
+.blueprint-project-card span,
+.blueprint-generator p,
+.blueprint-card span,
+.blueprint-card p,
+.outline-card p,
+.outline-card em {
+  color: #65706c;
+  line-height: 1.6;
+}
+
+.blueprint-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 12px;
+  color: #1d2527;
+  font-weight: 800;
+  text-align: left;
+}
+
+.blueprint-tab.active {
+  border-color: #2f6f73;
+  background: #edf6f3;
+  color: #244a4d;
+}
+
+.blueprint-main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.blueprint-generator {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.7fr) minmax(320px, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.blueprint-generator h2,
+.blueprint-editor h2 {
+  margin: 0 0 6px;
+}
+
+.blueprint-generator textarea {
+  min-height: 96px;
+}
+
+.generator-actions {
+  display: grid;
+  gap: 10px;
+  min-width: 150px;
+}
+
+.blueprint-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.blueprint-editor textarea {
+  min-height: 120px;
+}
+
+.blueprint-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.blueprint-card,
+.outline-card {
+  display: grid;
+  gap: 8px;
+}
+
+.blueprint-card p,
+.outline-card p,
+.outline-card em {
+  margin: 0;
+  font-style: normal;
+}
+
+.blueprint-outline {
+  display: grid;
+  gap: 10px;
+}
+
+.outline-card span {
+  color: #2f6f73;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .note-stack p {
@@ -944,6 +1076,8 @@ button:disabled {
   .hub-grid,
   .settings-grid,
   .skills-grid,
+  .blueprint-layout,
+  .blueprint-generator,
   .profile-form,
   .graph-center,
   .create-project,
